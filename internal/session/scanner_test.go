@@ -12,12 +12,12 @@ import (
 
 func TestScanner_Discover(t *testing.T) {
 	dir := t.TempDir()
-	projectsDir := filepath.Join(dir, "projects", "-Users-tarik-myapp", "sessions")
-	if err := os.MkdirAll(projectsDir, 0755); err != nil {
+	projectDir := filepath.Join(dir, "projects", "-Users-tarik-myapp")
+	if err := os.MkdirAll(projectDir, 0755); err != nil {
 		t.Fatal(err)
 	}
 
-	sessionFile := filepath.Join(projectsDir, "abc123.jsonl")
+	sessionFile := filepath.Join(projectDir, "abc123.jsonl")
 	line := `{"type":"user","uuid":"u1","timestamp":"2025-01-01T00:00:00Z","sessionId":"s1","message":{"role":"user","content":"Hello"}}` + "\n"
 	if err := os.WriteFile(sessionFile, []byte(line), 0644); err != nil {
 		t.Fatal(err)
@@ -51,10 +51,10 @@ func TestScanner_Discover_NoProjectsDir(t *testing.T) {
 
 func TestScanner_LoadSession(t *testing.T) {
 	dir := t.TempDir()
-	projectsDir := filepath.Join(dir, "projects", "-Users-tarik-myapp", "sessions")
-	os.MkdirAll(projectsDir, 0755)
+	projectDir := filepath.Join(dir, "projects", "-Users-tarik-myapp")
+	os.MkdirAll(projectDir, 0755)
 
-	sessionFile := filepath.Join(projectsDir, "abc123.jsonl")
+	sessionFile := filepath.Join(projectDir, "abc123.jsonl")
 	lines := `{"type":"user","uuid":"u1","timestamp":"2025-06-01T10:00:00Z","sessionId":"s1","message":{"role":"user","content":"Add auth to API endpoints"}}
 {"type":"assistant","uuid":"a1","timestamp":"2025-06-01T10:01:00Z","sessionId":"s1","message":{"role":"assistant","model":"claude-3.5-sonnet","content":[{"type":"text","text":"I'll help"},{"type":"tool_use","name":"Read","input":{"file_path":"src/auth.ts"}}]}}
 `
@@ -92,10 +92,10 @@ func TestScanner_LoadSession(t *testing.T) {
 
 func TestScanner_UpdateSession(t *testing.T) {
 	dir := t.TempDir()
-	projectsDir := filepath.Join(dir, "projects", "-Users-tarik-myapp", "sessions")
-	os.MkdirAll(projectsDir, 0755)
+	projectDir := filepath.Join(dir, "projects", "-Users-tarik-myapp")
+	os.MkdirAll(projectDir, 0755)
 
-	sessionFile := filepath.Join(projectsDir, "abc123.jsonl")
+	sessionFile := filepath.Join(projectDir, "abc123.jsonl")
 	line1 := `{"type":"user","uuid":"u1","timestamp":"2025-06-01T10:00:00Z","sessionId":"s1","message":{"role":"user","content":"Fix bug"}}` + "\n"
 	os.WriteFile(sessionFile, []byte(line1), 0644)
 
@@ -131,10 +131,10 @@ func TestScanner_MultipleProjects(t *testing.T) {
 	dir := t.TempDir()
 
 	for _, proj := range []string{"-Users-tarik-app1", "-Users-tarik-app2"} {
-		sessDir := filepath.Join(dir, "projects", proj, "sessions")
-		os.MkdirAll(sessDir, 0755)
+		projDir := filepath.Join(dir, "projects", proj)
+		os.MkdirAll(projDir, 0755)
 		line := `{"type":"user","uuid":"u1","timestamp":"2025-01-01T00:00:00Z","sessionId":"s1","message":{"role":"user","content":"task"}}` + "\n"
-		os.WriteFile(filepath.Join(sessDir, "session.jsonl"), []byte(line), 0644)
+		os.WriteFile(filepath.Join(projDir, "session.jsonl"), []byte(line), 0644)
 	}
 
 	scanner := NewScanner(dir)
@@ -160,8 +160,8 @@ func TestExtractProjectFromPath(t *testing.T) {
 		path     string
 		expected string
 	}{
-		{"/home/user/.claude/projects/-Users-tarik-myapp/sessions/abc.jsonl", "myapp"},
-		{"/home/user/.claude/projects/-Users-tarik-Desktop-webapp/sessions/xyz.jsonl", "webapp"},
+		{"/home/user/.claude/projects/-Users-tarik-myapp/abc.jsonl", "myapp"},
+		{"/home/user/.claude/projects/-Users-tarik-Desktop-webapp/xyz.jsonl", "webapp"},
 	}
 
 	for _, tt := range tests {

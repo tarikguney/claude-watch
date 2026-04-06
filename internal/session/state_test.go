@@ -44,15 +44,15 @@ func TestDeriveStatus_Active(t *testing.T) {
 	}
 }
 
-func TestDeriveStatus_Responding(t *testing.T) {
+func TestDeriveStatus_AssistantTextOnly(t *testing.T) {
 	rec := parser.Record{
 		Type:      "assistant",
 		Timestamp: time.Now().Format(time.RFC3339Nano),
 		Message:   json.RawMessage(`{"role":"assistant","content":[{"type":"text","text":"Here is my answer"}]}`),
 	}
 	status := DeriveStatus(rec, false, time.Now())
-	if status != StatusResponding {
-		t.Errorf("expected Responding, got %s", status)
+	if status != StatusIdle {
+		t.Errorf("expected Idle, got %s", status)
 	}
 }
 

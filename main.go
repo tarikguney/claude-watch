@@ -27,6 +27,7 @@ func main() {
 	var refresh time.Duration
 	var claudeDir string
 	var compact bool
+	var maxAge time.Duration
 
 	rootCmd := &cobra.Command{
 		Use:     "claude-watch",
@@ -37,20 +38,21 @@ Discovers sessions automatically from ~/.claude/projects/.
 
 Source: https://github.com/tarikguney/claude-watch`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return run(claudeDir, refresh, compact)
+			return run(claudeDir, refresh, compact, maxAge)
 		},
 	}
 
-	rootCmd.Flags().DurationVar(&refresh, "refresh", 2*time.Second, "Dashboard refresh interval")
+	rootCmd.Flags().DurationVar(&refresh, "refresh", 1*time.Second, "Dashboard refresh interval")
 	rootCmd.Flags().StringVar(&claudeDir, "claude-dir", defaultClaudeDir(), "Path to Claude config directory")
 	rootCmd.Flags().BoolVar(&compact, "compact", false, "Compact mode for narrow terminals")
+	rootCmd.Flags().DurationVar(&maxAge, "max-age", 4*time.Hour, "Only show sessions modified within this duration (0 for all)")
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
 	}
 }
 
-func run(claudeDir string, refresh time.Duration, compact bool) error {
+func run(claudeDir string, refresh time.Duration, compact bool, maxAge time.Duration) error {
 	scanner := session.NewScanner(claudeDir)
 
 	if err := scanner.Discover(); err != nil {
@@ -71,13 +73,12 @@ func run(claudeDir string, refresh time.Duration, compact bool) error {
 	defer ticker.Stop()
 
 	// Initial render
-	render(scanner, compact)
+	render(scanner, compact, maxAge)
 
 	for range ticker.C {
-		// Re-discover periodically to pick up new sessions
-		scanner.Discover()
+		// LoadAll only loads newly discovered sessions (found by the watcher)
 		scanner.LoadAll()
-		render(scanner, compact)
+		render(scanner, compact, maxAge)
 	}
 
 	return nil
@@ -85,11 +86,13 @@ func run(claudeDir string, refresh time.Duration, compact bool) error {
 
 var output = termenv.NewOutput(os.Stdout)
 
-func render(scanner *session.Scanner, compact bool) {
+func render(scanner *session.Scanner, compact bool, maxAge time.Duration) {
 	output.ClearScreen()
 	output.MoveCursor(1, 1)
-	sessions := scanner.Sessions()
-	dashboard := ui.Render(sessions, compact)
+	allSessions := scanner.Sessions()
+	sessions := scanner.RecentSessions(maxAge)
+	hidden := len(allSessions) - len(sessions)
+	dashboard := ui.Render(sessions, compact, hidden)
 	fmt.Print(dashboard)
 }
 

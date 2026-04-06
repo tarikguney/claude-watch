@@ -53,8 +53,8 @@ func (s *Scanner) Discover() error {
 		if info.IsDir() || !strings.HasSuffix(path, ".jsonl") {
 			return nil
 		}
-		// Expect path like: .claude/projects/<encoded-project>/sessions/<uuid>.jsonl
-		if !strings.Contains(path, "sessions") {
+		// Skip subagent session files
+		if strings.Contains(path, "subagents") {
 			return nil
 		}
 
@@ -79,15 +79,18 @@ func (s *Scanner) LoadSession(path string) error {
 	}
 	s.mu.Unlock()
 
-	// Extract project name from path
-	projectName := extractProjectFromPath(path)
-
-	// Read head for original task
+	// Read head for original task and project name
 	headRecords, err := parser.ReadHead(path)
 	if err != nil {
 		return err
 	}
 	originalTask := ExtractOriginalTask(headRecords)
+
+	// Extract project name from cwd in session records, fall back to path
+	projectName := extractProjectFromCwd(headRecords)
+	if projectName == "" {
+		projectName = extractProjectFromPath(path)
+	}
 
 	// Read tail for current state
 	tailRecords, err := parser.ReadTail(path)
@@ -111,8 +114,11 @@ func (s *Scanner) LoadSession(path string) error {
 	action := ""
 	for i := len(tailRecords) - 1; i >= 0; i-- {
 		if tailRecords[i].Type == "assistant" {
-			action = ExtractLastToolAction(tailRecords[i])
-			break
+			a := ExtractLastToolAction(tailRecords[i])
+			if a != "" {
+				action = a
+				break
+			}
 		}
 	}
 
@@ -123,21 +129,33 @@ func (s *Scanner) LoadSession(path string) error {
 	}
 
 	var startTime time.Time
-	if len(headRecords) > 0 {
-		if t, err := time.Parse(time.RFC3339Nano, headRecords[0].Timestamp); err == nil {
-			startTime = t
+	for _, rec := range headRecords {
+		if rec.Timestamp != "" {
+			if t, err := time.Parse(time.RFC3339Nano, rec.Timestamp); err == nil {
+				startTime = t
+				break
+			}
 		}
 	}
 
+	// Extract cwd from head records
+	cwd := extractCwd(headRecords)
+
 	s.mu.Lock()
 	state.ProjectName = projectName
+	state.Cwd = cwd
 	state.OriginalTask = originalTask
-	state.CurrentAction = action
+	if action != "" {
+		state.CurrentAction = action
+	}
 	state.Status = status
-	state.Model = model
+	if model != "" {
+		state.Model = model
+	}
 	state.StartTime = startTime
 	state.LastUpdate = now
 	state.FileOffset = info.Size()
+	state.FileModTime = info.ModTime()
 	if lastRec.SessionID != "" {
 		state.SessionID = lastRec.SessionID
 	}
@@ -187,6 +205,7 @@ func (s *Scanner) UpdateSession(path string) error {
 	s.mu.Lock()
 	state.FileOffset = newOffset
 	state.LastUpdate = now
+	state.FileModTime = now
 	state.Status = status
 	if action != "" {
 		state.CurrentAction = action
@@ -214,12 +233,14 @@ func (s *Scanner) Sessions() []State {
 	return result
 }
 
-// LoadAll loads state for all discovered sessions.
+// LoadAll loads state for sessions that haven't been loaded yet.
 func (s *Scanner) LoadAll() {
 	s.mu.RLock()
-	paths := make([]string, 0, len(s.sessions))
-	for path := range s.sessions {
-		paths = append(paths, path)
+	paths := make([]string, 0)
+	for path, state := range s.sessions {
+		if state.FileOffset == 0 {
+			paths = append(paths, path)
+		}
 	}
 	s.mu.RUnlock()
 
@@ -228,10 +249,92 @@ func (s *Scanner) LoadAll() {
 	}
 }
 
+// FilteredSessions returns sessions whose cwd matches the given directory.
+// Comparison is done on cleaned/normalized paths.
+func (s *Scanner) FilteredSessions(dir string, maxAge time.Duration) []State {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	cleanDir := filepath.Clean(dir)
+	var cutoff time.Time
+	if maxAge > 0 {
+		cutoff = time.Now().Add(-maxAge)
+	}
+
+	result := make([]State, 0)
+	for _, state := range s.sessions {
+		if maxAge > 0 && !state.FileModTime.After(cutoff) {
+			continue
+		}
+		if state.Cwd != "" && filepath.Clean(state.Cwd) == cleanDir {
+			result = append(result, *state)
+		}
+	}
+	return deduplicateByCwd(result)
+}
+
+// RecentSessions returns sessions whose file was modified within maxAge.
+// If maxAge is 0, all sessions are returned.
+// Only the most recent session per cwd is kept.
+func (s *Scanner) RecentSessions(maxAge time.Duration) []State {
+	if maxAge == 0 {
+		return deduplicateByCwd(s.Sessions())
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	cutoff := time.Now().Add(-maxAge)
+	result := make([]State, 0)
+	for _, state := range s.sessions {
+		if state.FileModTime.After(cutoff) {
+			result = append(result, *state)
+		}
+	}
+	return deduplicateByCwd(result)
+}
+
+// deduplicateByCwd keeps only the most recently modified session per cwd.
+func deduplicateByCwd(sessions []State) []State {
+	best := make(map[string]State)
+	for _, s := range sessions {
+		key := s.Cwd
+		if key == "" {
+			key = s.FilePath // fallback for sessions without cwd
+		}
+		existing, ok := best[key]
+		if !ok || s.FileModTime.After(existing.FileModTime) {
+			best[key] = s
+		}
+	}
+	result := make([]State, 0, len(best))
+	for _, s := range best {
+		result = append(result, s)
+	}
+	return result
+}
+
+func extractCwd(records []parser.Record) string {
+	for _, rec := range records {
+		if rec.Cwd != "" {
+			return rec.Cwd
+		}
+	}
+	return ""
+}
+
+func extractProjectFromCwd(records []parser.Record) string {
+	for _, rec := range records {
+		if rec.Cwd != "" {
+			return filepath.Base(rec.Cwd)
+		}
+	}
+	return ""
+}
+
 func extractProjectFromPath(path string) string {
-	// Path: .../.claude/projects/<encoded-project>/sessions/<uuid>.jsonl
-	dir := filepath.Dir(path) // .../sessions
-	dir = filepath.Dir(dir)   // .../<encoded-project>
+	// Path: .../.claude/projects/<encoded-project>/<uuid>.jsonl
+	dir := filepath.Dir(path) // .../<encoded-project>
 	encoded := filepath.Base(dir)
 	return ExtractProjectName(encoded)
 }

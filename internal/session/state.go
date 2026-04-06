@@ -30,6 +30,7 @@ type State struct {
 	SessionID   string
 	FilePath    string
 	ProjectName string
+	Cwd         string
 	OriginalTask string
 	CurrentAction string
 	Status      Status
@@ -37,6 +38,7 @@ type State struct {
 	StartTime   time.Time
 	LastUpdate  time.Time
 	FileOffset  int64
+	FileModTime time.Time
 }
 
 // idleThreshold is the duration after which a session with no result is considered Idle.
@@ -57,12 +59,12 @@ func DeriveStatus(rec parser.Record, lastToolResultIsError bool, now time.Time) 
 		return StatusDone
 	}
 
-	if lastToolResultIsError {
-		return StatusError
-	}
-
 	if age > idleThreshold {
 		return StatusIdle
+	}
+
+	if lastToolResultIsError {
+		return StatusError
 	}
 
 	switch rec.Type {
@@ -85,9 +87,7 @@ func DeriveStatus(rec parser.Record, lastToolResultIsError bool, now time.Time) 
 		if hasToolUse && age < activeThreshold {
 			return StatusActive
 		}
-		if !hasToolUse && age < activeThreshold {
-			return StatusResponding
-		}
+		// Text-only assistant message means Claude finished and is waiting for input
 		return StatusIdle
 
 	case "user":
@@ -271,8 +271,9 @@ func shortenPath(p string) string {
 func truncate(s string, maxLen int) string {
 	s = strings.ReplaceAll(s, "\n", " ")
 	s = strings.TrimSpace(s)
-	if len(s) <= maxLen {
+	runes := []rune(s)
+	if len(runes) <= maxLen {
 		return s
 	}
-	return s[:maxLen-3] + "..."
+	return string(runes[:maxLen-3]) + "..."
 }

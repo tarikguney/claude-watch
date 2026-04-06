@@ -7,6 +7,7 @@ package session
 import (
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/fsnotify/fsnotify"
@@ -91,8 +92,16 @@ func (w *Watcher) handleEvent(event fsnotify.Event) {
 	if !strings.HasSuffix(path, ".jsonl") {
 		return
 	}
+	if strings.Contains(path, "subagents") {
+		return
+	}
 
-	if event.Has(fsnotify.Write) || event.Has(fsnotify.Create) {
+	if event.Has(fsnotify.Create) {
+		// New session file — register and do a full load
+		if err := w.scanner.LoadSession(path); err != nil {
+			log.Printf("error loading new session %s: %v", path, err)
+		}
+	} else if event.Has(fsnotify.Write) {
 		if err := w.scanner.UpdateSession(path); err != nil {
 			log.Printf("error updating session %s: %v", path, err)
 		}
@@ -111,7 +120,7 @@ func (w *Watcher) addWatchesRecursive(dir string) error {
 
 	for _, entry := range entries {
 		if entry.IsDir() {
-			subdir := dir + "/" + entry.Name()
+			subdir := filepath.Join(dir, entry.Name())
 			if err := w.addWatchesRecursive(subdir); err != nil {
 				log.Printf("warning: could not watch %s: %v", subdir, err)
 			}

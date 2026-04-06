@@ -17,7 +17,6 @@ import (
 var (
 	headerStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("15"))
 	separatorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	projectStyle   = lipgloss.NewStyle().Bold(true)
 	actionStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("15"))
 	durationStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 
@@ -33,23 +32,44 @@ var (
 
 // Column widths
 const (
-	colProject = 14
-	colStatus  = 12
-	colTask    = 30
-	colAction  = 34
+	colProject = 16
+	colStatus  = 10
+	colTask    = 32
+	colAction  = 36
 	colDur     = 7
 )
 
 const (
-	colProjectCompact = 10
+	colProjectCompact = 12
 	colStatusCompact  = 10
 	colTaskCompact    = 0
-	colActionCompact  = 30
-	colDurCompact     = 6
+	colActionCompact  = 32
+	colDurCompact     = 7
 )
 
+// joinCols joins pre-padded cells with a styled vertical bar separator.
+func joinCols(cells []string) string {
+	sep := separatorStyle.Render(" │ ")
+	return strings.Join(cells, sep)
+}
+
+// totalWidth calculates the visible width of columns + separators.
+func totalWidth(widths []int) int {
+	w := 0
+	for _, cw := range widths {
+		w += cw
+	}
+	w += (len(widths) - 1) * 3 // " │ " = 3 visible chars
+	return w
+}
+
+func hline(char string, width int) string {
+	return separatorStyle.Render(strings.Repeat(char, width))
+}
+
 // Render produces the full dashboard string for the given sessions.
-func Render(sessions []session.State, compact bool) string {
+// hiddenCount is the number of older sessions not shown due to max-age filtering.
+func Render(sessions []session.State, compact bool, hiddenCount int) string {
 	now := time.Now()
 	var b strings.Builder
 
@@ -65,40 +85,57 @@ func Render(sessions []session.State, compact bool) string {
 
 	title := headerStyle.Render("CLAUDE WATCH")
 	timestamp := durationStyle.Render(now.Format("01/02 15:04:05"))
+	b.WriteString(title + "  " + timestamp + "\n")
 
 	if compact {
-		b.WriteString(fmt.Sprintf("%s  %s\n", title, timestamp))
-		sep := separatorStyle.Render(strings.Repeat("─", 60))
-		b.WriteString(sep + "\n")
-		header := fmt.Sprintf("%-*s %-*s %-*s %*s",
-			colProjectCompact, "PROJECT",
-			colStatusCompact, "STATUS",
-			colActionCompact, "CURRENT ACTION",
-			colDurCompact, "DUR")
-		b.WriteString(headerStyle.Render(header) + "\n")
+		tw := totalWidth([]int{colProjectCompact, colStatusCompact, colActionCompact, colDurCompact})
+		b.WriteString(hline("─", tw) + "\n")
+		b.WriteString(joinCols([]string{
+			headerStyle.Render(pad("PROJECT", colProjectCompact)),
+			headerStyle.Render(pad("STATUS", colStatusCompact)),
+			headerStyle.Render(pad("CURRENT ACTION", colActionCompact)),
+			headerStyle.Render(pad("DUR", colDurCompact)),
+		}) + "\n")
+		b.WriteString(hline("─", tw) + "\n")
 
-		for _, s := range sessions {
+		for i, s := range sessions {
 			b.WriteString(renderRowCompact(s, now) + "\n")
+			if i < len(sessions)-1 {
+				b.WriteString(hline("─", tw) + "\n")
+			}
+		}
+		if len(sessions) > 0 {
+			b.WriteString(hline("─", tw) + "\n")
 		}
 	} else {
-		b.WriteString(fmt.Sprintf("%-60s %s\n", title, timestamp))
-		sep := separatorStyle.Render(strings.Repeat("─", 97))
-		b.WriteString(sep + "\n")
-		header := fmt.Sprintf("%-*s %-*s %-*s %-*s %*s",
-			colProject, "PROJECT",
-			colStatus, "STATUS",
-			colTask, "TASK",
-			colAction, "CURRENT ACTION",
-			colDur, "DUR")
-		b.WriteString(headerStyle.Render(header) + "\n")
+		tw := totalWidth([]int{colProject, colStatus, colTask, colAction, colDur})
+		b.WriteString(hline("─", tw) + "\n")
+		b.WriteString(joinCols([]string{
+			headerStyle.Render(pad("PROJECT", colProject)),
+			headerStyle.Render(pad("STATUS", colStatus)),
+			headerStyle.Render(pad("CONTEXT", colTask)),
+			headerStyle.Render(pad("CURRENT ACTION", colAction)),
+			headerStyle.Render(pad("DUR", colDur)),
+		}) + "\n")
+		b.WriteString(hline("─", tw) + "\n")
 
-		for _, s := range sessions {
+		for i, s := range sessions {
 			b.WriteString(renderRow(s, now) + "\n")
+			if i < len(sessions)-1 {
+				b.WriteString(hline("─", tw) + "\n")
+			}
+		}
+		if len(sessions) > 0 {
+			b.WriteString(hline("─", tw) + "\n")
 		}
 	}
 
 	if len(sessions) == 0 {
 		b.WriteString(durationStyle.Render("  No active sessions found. Watching for new sessions...") + "\n")
+	}
+
+	if hiddenCount > 0 {
+		b.WriteString(durationStyle.Render(fmt.Sprintf("\n  %d older session(s) hidden. Use --max-age=0 to show all.", hiddenCount)) + "\n")
 	}
 
 	return b.String()
@@ -115,12 +152,13 @@ func renderRow(s session.State, now time.Time) string {
 		action = "Completed"
 	}
 
-	return fmt.Sprintf("%-*s %s %-*s %-*s %*s",
-		colProject, pad(s.ProjectName, colProject),
-		renderStatus(s.Status, colStatus),
-		colTask, pad(s.OriginalTask, colTask),
-		colAction, actionStyle.Render(pad(action, colAction)),
-		colDur, durationStyle.Render(dur))
+	return joinCols([]string{
+		pad(s.ProjectName, colProject),
+		styledStatus(s.Status, colStatus),
+		pad(s.OriginalTask, colTask),
+		actionStyle.Render(pad(action, colAction)),
+		durationStyle.Render(pad(dur, colDur)),
+	})
 }
 
 func renderRowCompact(s session.State, now time.Time) string {
@@ -134,14 +172,15 @@ func renderRowCompact(s session.State, now time.Time) string {
 		action = "Completed"
 	}
 
-	return fmt.Sprintf("%-*s %s %-*s %*s",
-		colProjectCompact, pad(s.ProjectName, colProjectCompact),
-		renderStatus(s.Status, colStatusCompact),
-		colActionCompact, actionStyle.Render(pad(action, colActionCompact)),
-		colDurCompact, durationStyle.Render(dur))
+	return joinCols([]string{
+		pad(s.ProjectName, colProjectCompact),
+		styledStatus(s.Status, colStatusCompact),
+		actionStyle.Render(pad(action, colActionCompact)),
+		durationStyle.Render(pad(dur, colDurCompact)),
+	})
 }
 
-func renderStatus(status session.Status, width int) string {
+func styledStatus(status session.Status, width int) string {
 	style, ok := statusStyles[status]
 	if !ok {
 		style = lipgloss.NewStyle()
