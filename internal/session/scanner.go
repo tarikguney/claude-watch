@@ -126,6 +126,7 @@ func (s *Scanner) LoadSession(path string) error {
 	isError := CheckLastToolResultError(tailRecords)
 	lastAssistantWorking := isAssistantWorking(lastRec)
 	lastIsSystemInjected := lastRec.IsSystemInjectedUser()
+	lastHasToolResult := lastRec.HasToolResult()
 	status := StatusIdle
 	if len(tailRecords) > 0 {
 		status = DeriveStatus(lastRec, isError, now, state.PID > 0)
@@ -164,6 +165,7 @@ func (s *Scanner) LoadSession(path string) error {
 	state.LastToolResultError = isError
 	state.LastAssistantIsWorking = lastAssistantWorking
 	state.LastIsSystemInjectedUser = lastIsSystemInjected
+	state.LastHasToolResult = lastHasToolResult
 	if lastRec.SessionID != "" {
 		state.SessionID = lastRec.SessionID
 	}
@@ -223,6 +225,7 @@ func (s *Scanner) UpdateSession(path string) error {
 	state.LastToolResultError = isError
 	state.LastAssistantIsWorking = lastAssistantWorking
 	state.LastIsSystemInjectedUser = lastRec.IsSystemInjectedUser()
+	state.LastHasToolResult = lastRec.HasToolResult()
 	if action != "" {
 		state.CurrentAction = action
 	}
@@ -436,7 +439,11 @@ func (s *Scanner) MatchProcesses(procs []process.Info) {
 			}
 		case "user":
 			if state.LastIsSystemInjectedUser {
-				state.Status = StatusIdle
+				if state.LastHasToolResult {
+					state.Status = StatusResponding
+				} else {
+					state.Status = StatusIdle
+				}
 			} else {
 				state.Status = StatusResponding
 			}

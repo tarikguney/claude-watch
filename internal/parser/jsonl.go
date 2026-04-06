@@ -58,6 +58,27 @@ func (r Record) IsSystemInjectedUser() bool {
 	return false
 }
 
+// HasToolResult returns true if this user record contains a tool_result content block.
+func (r Record) HasToolResult() bool {
+	if r.Type != "user" {
+		return false
+	}
+	mc, err := ParseMessageContent(r)
+	if err != nil {
+		return false
+	}
+	blocks, err := ParseContentBlocks(mc)
+	if err != nil {
+		return false
+	}
+	for _, b := range blocks {
+		if b.Type == "tool_result" {
+			return true
+		}
+	}
+	return false
+}
+
 // MessageContent represents the message field of a record.
 type MessageContent struct {
 	Role    string          `json:"role"`

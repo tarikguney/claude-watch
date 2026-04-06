@@ -94,15 +94,29 @@ func TestDeriveStatus_UserPrompt(t *testing.T) {
 	}
 }
 
-func TestDeriveStatus_ToolResult_NotThinking(t *testing.T) {
+func TestDeriveStatus_ToolResult_WithProcess(t *testing.T) {
 	rec := parser.Record{
 		Type:      "user",
 		Timestamp: time.Now().Format(time.RFC3339Nano),
 		Message:   json.RawMessage(`{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"file contents"}]}`),
 	}
+	// Tool result with running process — Claude is processing the output
 	status := DeriveStatus(rec, false, time.Now(), true)
+	if status != StatusResponding {
+		t.Errorf("expected Responding for tool_result with process, got %s", status)
+	}
+}
+
+func TestDeriveStatus_ToolResult_NoProcess(t *testing.T) {
+	rec := parser.Record{
+		Type:      "user",
+		Timestamp: time.Now().Format(time.RFC3339Nano),
+		Message:   json.RawMessage(`{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"file contents"}]}`),
+	}
+	// Tool result without running process — stale session
+	status := DeriveStatus(rec, false, time.Now(), false)
 	if status != StatusIdle {
-		t.Errorf("expected Idle for tool_result, got %s", status)
+		t.Errorf("expected Idle for tool_result without process, got %s", status)
 	}
 }
 

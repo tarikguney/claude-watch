@@ -47,6 +47,7 @@ type State struct {
 	LastToolResultError      bool
 	LastAssistantIsWorking   bool // true if last assistant record had tool_use or thinking (no text-only)
 	LastIsSystemInjectedUser bool
+	LastHasToolResult        bool
 }
 
 // idleThreshold is the duration after which a session with no result is considered Idle.
@@ -88,9 +89,11 @@ func DeriveStatus(rec parser.Record, lastToolResultIsError bool, now time.Time, 
 		return StatusIdle
 
 	case "user":
-		// System-injected user records (tool results, bash output, /clear, local commands)
-		// don't mean Claude is working — it's just data flowing back.
 		if rec.IsSystemInjectedUser() {
+			// Tool result with a running process — Claude is processing the output
+			if processRunning && rec.HasToolResult() {
+				return StatusResponding
+			}
 			return StatusIdle
 		}
 		// Real user prompt — Claude is working on it
