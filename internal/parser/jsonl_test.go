@@ -120,6 +120,37 @@ func TestParseToolInput(t *testing.T) {
 	}
 }
 
+func TestIsSystemInjectedUser_ToolResult(t *testing.T) {
+	rec := Record{
+		Type:    "user",
+		Message: json.RawMessage(`{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"output"}]}`),
+	}
+	if !rec.IsSystemInjectedUser() {
+		t.Error("expected tool_result user record to be system-injected")
+	}
+}
+
+func TestIsSystemInjectedUser_RealPrompt(t *testing.T) {
+	rec := Record{
+		Type:    "user",
+		Message: json.RawMessage(`{"role":"user","content":"fix the bug"}`),
+	}
+	if rec.IsSystemInjectedUser() {
+		t.Error("expected real user prompt to NOT be system-injected")
+	}
+}
+
+func TestIsSystemInjectedUser_IsMeta(t *testing.T) {
+	rec := Record{
+		Type:    "user",
+		IsMeta:  true,
+		Message: json.RawMessage(`{"role":"user","content":"some meta content"}`),
+	}
+	if !rec.IsSystemInjectedUser() {
+		t.Error("expected isMeta=true user record to be system-injected")
+	}
+}
+
 func TestParseMessageContent_NilMessage(t *testing.T) {
 	rec := Record{Type: "user"}
 	_, err := ParseMessageContent(rec)

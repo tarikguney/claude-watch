@@ -56,8 +56,7 @@ claude-watch --compact
 
 | Status | Meaning |
 |---|---|
-| **Tool Use** | Agent is executing tool calls (reading, editing, running commands) |
-| **Thinking** | User message sent, waiting for Claude's response |
+| **Responding** | Claude is actively working -- thinking, calling tools, or generating a response |
 | **Idle** | Process is running but Claude is waiting for user input |
 | **Done** | Session completed |
 | **Error** | Last tool call returned an error |

@@ -32,19 +32,19 @@ func TestDeriveStatus_Error(t *testing.T) {
 	}
 }
 
-func TestDeriveStatus_Active(t *testing.T) {
+func TestDeriveStatus_ToolUse(t *testing.T) {
 	rec := parser.Record{
 		Type:      "assistant",
 		Timestamp: time.Now().Format(time.RFC3339Nano),
 		Message:   json.RawMessage(`{"role":"assistant","content":[{"type":"tool_use","name":"Read","input":{"file_path":"x.go"}}]}`),
 	}
 	status := DeriveStatus(rec, false, time.Now(), false)
-	if status != StatusActive {
-		t.Errorf("expected Active, got %s", status)
+	if status != StatusResponding {
+		t.Errorf("expected Responding, got %s", status)
 	}
 }
 
-func TestDeriveStatus_AssistantTextOnly(t *testing.T) {
+func TestDeriveStatus_AssistantTextOnly_NoProcess(t *testing.T) {
 	rec := parser.Record{
 		Type:      "assistant",
 		Timestamp: time.Now().Format(time.RFC3339Nano),
@@ -56,15 +56,53 @@ func TestDeriveStatus_AssistantTextOnly(t *testing.T) {
 	}
 }
 
-func TestDeriveStatus_Thinking(t *testing.T) {
+func TestDeriveStatus_AssistantTextOnly_WithProcess(t *testing.T) {
+	rec := parser.Record{
+		Type:      "assistant",
+		Timestamp: time.Now().Format(time.RFC3339Nano),
+		Message:   json.RawMessage(`{"role":"assistant","content":[{"type":"text","text":"Here is my answer"}]}`),
+	}
+	// Text-only assistant is Idle even with a running process — we can't distinguish
+	// "mid-stream" from "done, waiting for input" and the steady state is Idle.
+	status := DeriveStatus(rec, false, time.Now(), true)
+	if status != StatusIdle {
+		t.Errorf("expected Idle, got %s", status)
+	}
+}
+
+func TestDeriveStatus_ThinkingBlock(t *testing.T) {
+	rec := parser.Record{
+		Type:      "assistant",
+		Timestamp: time.Now().Format(time.RFC3339Nano),
+		Message:   json.RawMessage(`{"role":"assistant","content":[{"type":"thinking","thinking":""}]}`),
+	}
+	status := DeriveStatus(rec, false, time.Now(), true)
+	if status != StatusResponding {
+		t.Errorf("expected Responding, got %s", status)
+	}
+}
+
+func TestDeriveStatus_UserPrompt(t *testing.T) {
 	rec := parser.Record{
 		Type:      "user",
 		Timestamp: time.Now().Format(time.RFC3339Nano),
 		Message:   json.RawMessage(`{"role":"user","content":"do something"}`),
 	}
 	status := DeriveStatus(rec, false, time.Now(), false)
-	if status != StatusThinking {
-		t.Errorf("expected Thinking, got %s", status)
+	if status != StatusResponding {
+		t.Errorf("expected Responding, got %s", status)
+	}
+}
+
+func TestDeriveStatus_ToolResult_NotThinking(t *testing.T) {
+	rec := parser.Record{
+		Type:      "user",
+		Timestamp: time.Now().Format(time.RFC3339Nano),
+		Message:   json.RawMessage(`{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"file contents"}]}`),
+	}
+	status := DeriveStatus(rec, false, time.Now(), true)
+	if status != StatusIdle {
+		t.Errorf("expected Idle for tool_result, got %s", status)
 	}
 }
 

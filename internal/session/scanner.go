@@ -124,7 +124,7 @@ func (s *Scanner) LoadSession(path string) error {
 	}
 
 	isError := CheckLastToolResultError(tailRecords)
-	lastHasToolUse := lastRecordHasToolUse(lastRec)
+	lastAssistantWorking := isAssistantWorking(lastRec)
 	lastIsSystemInjected := lastRec.IsSystemInjectedUser()
 	status := StatusIdle
 	if len(tailRecords) > 0 {
@@ -162,7 +162,7 @@ func (s *Scanner) LoadSession(path string) error {
 	state.LastRecordType = lastRec.Type
 	state.LastRecordTimestamp = lastRec.Timestamp
 	state.LastToolResultError = isError
-	state.LastHasToolUse = lastHasToolUse
+	state.LastAssistantIsWorking = lastAssistantWorking
 	state.LastIsSystemInjectedUser = lastIsSystemInjected
 	if lastRec.SessionID != "" {
 		state.SessionID = lastRec.SessionID
@@ -210,7 +210,7 @@ func (s *Scanner) UpdateSession(path string) error {
 	lastPrompt := ExtractLastPrompt(newRecords)
 	lastResponse := ExtractLastResponse(newRecords)
 	isError := CheckLastToolResultError(newRecords)
-	lastHasToolUse := lastRecordHasToolUse(lastRec)
+	lastAssistantWorking := isAssistantWorking(lastRec)
 	status := DeriveStatus(lastRec, isError, now, state.PID > 0)
 
 	s.mu.Lock()
@@ -221,7 +221,7 @@ func (s *Scanner) UpdateSession(path string) error {
 	state.LastRecordType = lastRec.Type
 	state.LastRecordTimestamp = lastRec.Timestamp
 	state.LastToolResultError = isError
-	state.LastHasToolUse = lastHasToolUse
+	state.LastAssistantIsWorking = lastAssistantWorking
 	state.LastIsSystemInjectedUser = lastRec.IsSystemInjectedUser()
 	if action != "" {
 		state.CurrentAction = action
@@ -429,8 +429,8 @@ func (s *Scanner) MatchProcesses(procs []process.Info) {
 		}
 		switch state.LastRecordType {
 		case "assistant":
-			if state.LastHasToolUse {
-				state.Status = StatusActive
+			if state.LastAssistantIsWorking {
+				state.Status = StatusResponding
 			} else {
 				state.Status = StatusIdle
 			}
@@ -438,32 +438,12 @@ func (s *Scanner) MatchProcesses(procs []process.Info) {
 			if state.LastIsSystemInjectedUser {
 				state.Status = StatusIdle
 			} else {
-				state.Status = StatusThinking
+				state.Status = StatusResponding
 			}
 		}
 	}
 }
 
-// lastRecordHasToolUse checks if a record is an assistant message containing a tool_use block.
-func lastRecordHasToolUse(rec parser.Record) bool {
-	if rec.Type != "assistant" {
-		return false
-	}
-	mc, err := parser.ParseMessageContent(rec)
-	if err != nil {
-		return false
-	}
-	blocks, err := parser.ParseContentBlocks(mc)
-	if err != nil {
-		return false
-	}
-	for _, b := range blocks {
-		if b.Type == "tool_use" {
-			return true
-		}
-	}
-	return false
-}
 
 // RunningSessions returns only sessions that have a running process (PID > 0).
 func (s *Scanner) RunningSessions() []State {

@@ -34,7 +34,7 @@ func (r Record) IsSystemInjectedUser() bool {
 	if r.IsMeta {
 		return true
 	}
-	// Check if message content is XML-wrapped system content
+	// Check message content for system-injected patterns
 	mc, err := ParseMessageContent(r)
 	if err != nil {
 		return false
@@ -44,6 +44,10 @@ func (r Record) IsSystemInjectedUser() bool {
 		return false
 	}
 	for _, b := range blocks {
+		// Tool results are system-injected (output from tool execution)
+		if b.Type == "tool_result" {
+			return true
+		}
 		if b.Type == "text" && b.Text != "" {
 			trimmed := strings.TrimSpace(b.Text)
 			if strings.HasPrefix(trimmed, "<") {

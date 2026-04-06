@@ -29,7 +29,7 @@ func TestRender_WithSessions(t *testing.T) {
 			ProjectName:   "myapp",
 			OriginalTask:  "Add auth to API endpoints",
 			CurrentAction: "Editing src/middleware.ts",
-			Status:        session.StatusActive,
+			Status:        session.StatusResponding,
 			StartTime:     now.Add(-12 * time.Minute),
 			LastUpdate:    now,
 		},
@@ -37,7 +37,7 @@ func TestRender_WithSessions(t *testing.T) {
 			ProjectName:   "webapp",
 			OriginalTask:  "Fix login page CSS",
 			CurrentAction: "Running npm test",
-			Status:        session.StatusActive,
+			Status:        session.StatusResponding,
 			StartTime:     now.Add(-5 * time.Minute),
 			LastUpdate:    now,
 		},
@@ -80,7 +80,7 @@ func TestRender_Compact(t *testing.T) {
 			ProjectName:   "myapp",
 			OriginalTask:  "Add auth",
 			CurrentAction: "Editing main.go",
-			Status:        session.StatusActive,
+			Status:        session.StatusResponding,
 			StartTime:     now.Add(-5 * time.Minute),
 			LastUpdate:    now,
 		},
@@ -105,7 +105,7 @@ func TestRender_SortOrder(t *testing.T) {
 		{
 			ProjectName: "high-pid",
 			PID:         300,
-			Status:      session.StatusActive,
+			Status:      session.StatusResponding,
 			LastUpdate:  now,
 			StartTime:   now.Add(-5 * time.Minute),
 		},
@@ -137,14 +137,8 @@ func TestRender_SortOrder(t *testing.T) {
 }
 
 func TestStatusPriority(t *testing.T) {
-	if statusPriority(session.StatusActive) >= statusPriority(session.StatusResponding) {
-		t.Error("Active should have higher priority than Responding")
-	}
-	if statusPriority(session.StatusResponding) >= statusPriority(session.StatusThinking) {
-		t.Error("Responding should have higher priority than Thinking")
-	}
-	if statusPriority(session.StatusThinking) >= statusPriority(session.StatusError) {
-		t.Error("Thinking should have higher priority than Error")
+	if statusPriority(session.StatusResponding) >= statusPriority(session.StatusError) {
+		t.Error("Responding should have higher priority than Error")
 	}
 	if statusPriority(session.StatusError) >= statusPriority(session.StatusIdle) {
 		t.Error("Error should have higher priority than Idle")

@@ -17,9 +17,7 @@ import (
 type Status string
 
 const (
-	StatusActive     Status = "Tool Use"
 	StatusResponding Status = "Responding"
-	StatusThinking   Status = "Thinking"
 	StatusIdle       Status = "Idle"
 	StatusDone       Status = "Done"
 	StatusError      Status = "Error"
@@ -47,14 +45,14 @@ type State struct {
 	LastRecordType           string
 	LastRecordTimestamp      string
 	LastToolResultError      bool
-	LastHasToolUse           bool
+	LastAssistantIsWorking   bool // true if last assistant record had tool_use or thinking (no text-only)
 	LastIsSystemInjectedUser bool
 }
 
 // idleThreshold is the duration after which a session with no result is considered Idle.
 const idleThreshold = 5 * time.Minute
 
-// activeThreshold is the max age of the last record to still be considered Active/Responding/Thinking.
+// activeThreshold is the max age of the last record to still be considered Responding.
 const activeThreshold = 2 * time.Minute
 
 // DeriveStatus computes the session status from the last record and its timestamp.
@@ -82,41 +80,46 @@ func DeriveStatus(rec parser.Record, lastToolResultIsError bool, now time.Time, 
 
 	switch rec.Type {
 	case "assistant":
-		mc, err := parser.ParseMessageContent(rec)
-		if err != nil {
-			return StatusIdle
+		// Check if Claude is actively working (tool call or thinking)
+		if isAssistantWorking(rec) {
+			return StatusResponding
 		}
-		blocks, err := parser.ParseContentBlocks(mc)
-		if err != nil {
-			return StatusIdle
-		}
-		hasToolUse := false
-		for _, b := range blocks {
-			if b.Type == "tool_use" {
-				hasToolUse = true
-				break
-			}
-		}
-		if hasToolUse {
-			return StatusActive
-		}
-		// Text-only assistant message — Claude finished and is waiting for input
+		// Text-only assistant message — Claude finished and is waiting for input.
 		return StatusIdle
 
 	case "user":
-		// System-injected user records (bash output, /clear, local commands)
-		// don't mean Claude is thinking — it's just waiting for real input.
+		// System-injected user records (tool results, bash output, /clear, local commands)
+		// don't mean Claude is working — it's just data flowing back.
 		if rec.IsSystemInjectedUser() {
 			return StatusIdle
 		}
-		// Real user prompt — Claude is thinking
+		// Real user prompt — Claude is working on it
 		if age < activeThreshold || processRunning {
-			return StatusThinking
+			return StatusResponding
 		}
 		return StatusIdle
 	}
 
 	return StatusIdle
+}
+
+// isAssistantWorking returns true if the assistant record indicates active work
+// (tool calls or thinking), as opposed to a final text response.
+func isAssistantWorking(rec parser.Record) bool {
+	mc, err := parser.ParseMessageContent(rec)
+	if err != nil {
+		return false
+	}
+	blocks, err := parser.ParseContentBlocks(mc)
+	if err != nil {
+		return false
+	}
+	for _, b := range blocks {
+		if b.Type == "tool_use" || b.Type == "thinking" {
+			return true
+		}
+	}
+	return false
 }
 
 // FormatToolAction produces a human-readable one-liner from a tool_use content block.

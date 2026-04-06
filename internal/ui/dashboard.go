@@ -26,12 +26,10 @@ var (
 	pidStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 
 	statusStyles = map[session.Status]lipgloss.Style{
-		session.StatusActive:     lipgloss.NewStyle().Foreground(lipgloss.Color("10")),  // Green
-		session.StatusResponding: lipgloss.NewStyle().Foreground(lipgloss.Color("14")),  // Cyan
-		session.StatusThinking:   lipgloss.NewStyle().Foreground(lipgloss.Color("11")),  // Yellow
-		session.StatusIdle:       lipgloss.NewStyle().Foreground(lipgloss.Color("240")), // Dim gray
-		session.StatusDone:       lipgloss.NewStyle().Foreground(lipgloss.Color("12")),  // Blue
-		session.StatusError:      lipgloss.NewStyle().Foreground(lipgloss.Color("9")),   // Red
+		session.StatusResponding: lipgloss.NewStyle().Background(lipgloss.Color("10")).Foreground(lipgloss.Color("0")).Bold(true),  // Green bg
+		session.StatusIdle:       lipgloss.NewStyle().Background(lipgloss.Color("240")).Foreground(lipgloss.Color("15")),           // Gray bg
+		session.StatusDone:       lipgloss.NewStyle().Background(lipgloss.Color("12")).Foreground(lipgloss.Color("15")).Bold(true), // Blue bg
+		session.StatusError:      lipgloss.NewStyle().Background(lipgloss.Color("9")).Foreground(lipgloss.Color("15")).Bold(true),  // Red bg
 	}
 )
 
@@ -208,7 +206,7 @@ func pad(s string, width int) string {
 // Only show the current action when Claude is actively working.
 func actionForStatus(s session.State) string {
 	switch s.Status {
-	case session.StatusActive, session.StatusThinking:
+	case session.StatusResponding:
 		return s.CurrentAction
 	case session.StatusDone:
 		return "Completed"
@@ -219,19 +217,15 @@ func actionForStatus(s session.State) string {
 
 func statusPriority(s session.Status) int {
 	switch s {
-	case session.StatusActive:
-		return 0
 	case session.StatusResponding:
-		return 1
-	case session.StatusThinking:
-		return 2
+		return 0
 	case session.StatusError:
-		return 3
+		return 1
 	case session.StatusIdle:
-		return 4
+		return 2
 	case session.StatusDone:
-		return 5
+		return 3
 	default:
-		return 6
+		return 4
 	}
 }
