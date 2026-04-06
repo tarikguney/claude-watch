@@ -21,7 +21,7 @@ type Info struct {
 var sessionIDRe = regexp.MustCompile(`--session-id\s+([0-9a-f-]{36})`)
 var addDirRe = regexp.MustCompile(`--add-dir\s+(\S+)`)
 
-// ListClaude returns info for all running claude.exe / claude processes.
+// ListClaude returns info for all running claude / claude.exe processes.
 func ListClaude() ([]Info, error) {
 	switch runtime.GOOS {
 	case "windows":
@@ -32,19 +32,23 @@ func ListClaude() ([]Info, error) {
 }
 
 func listWindows() ([]Info, error) {
-	// Use PowerShell to get process details including command line
 	cmd := exec.Command("powershell", "-NoProfile", "-Command",
 		`Get-CimInstance Win32_Process -Filter "Name='claude.exe'" | ForEach-Object { "$($_.ProcessId)|$($_.CreationDate.ToString('o'))|$($_.CommandLine)" }`)
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("powershell process query failed: %w", err)
 	}
-	return parseLines(string(out))
+	return parsePipedLines(string(out))
 }
 
 func listUnix() ([]Info, error) {
-	// Use ps to get PID, start time, and full command
-	cmd := exec.Command("ps", "axo", "pid,lstart,command")
+	// Use ps with a specific format. lstart gives a fixed-width date like:
+	//   "Sun Apr  6 10:53:38 2026"
+	// which is always 24 characters. The format is: pid (right-aligned), lstart (24 chars), command.
+	//
+	// We filter to only claude processes using grep to avoid parsing every process.
+	// Two-stage: first get all processes, then filter.
+	cmd := exec.Command("ps", "axo", "pid=,lstart=,command=")
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("ps command failed: %w", err)
@@ -53,22 +57,31 @@ func listUnix() ([]Info, error) {
 	var results []Info
 	for _, line := range strings.Split(string(out), "\n") {
 		line = strings.TrimSpace(line)
-		if !strings.Contains(line, "claude") || strings.Contains(line, "claude-watch") {
+		if line == "" {
 			continue
 		}
-		// Skip the header and grep itself
-		if strings.HasPrefix(line, "PID") {
+
+		// Only consider lines that have --session-id (definitive Claude CLI sessions).
+		// This avoids false positives from other processes with "claude" in the name.
+		if !strings.Contains(line, "--session-id") {
 			continue
 		}
+
+		// Skip claude-watch itself
+		if strings.Contains(line, "claude-watch") {
+			continue
+		}
+
 		info := parseUnixLine(line)
-		if info.SessionID != "" {
+		if info.SessionID != "" && info.PID > 0 {
 			results = append(results, info)
 		}
 	}
 	return results, nil
 }
 
-func parseLines(output string) ([]Info, error) {
+// parsePipedLines parses Windows PowerShell output in "PID|StartTime|CommandLine" format.
+func parsePipedLines(output string) ([]Info, error) {
 	var results []Info
 	for _, line := range strings.Split(output, "\n") {
 		line = strings.TrimSpace(line)
@@ -88,39 +101,66 @@ func parseLines(output string) ([]Info, error) {
 		startTime, _ := time.Parse(time.RFC3339Nano, strings.TrimSpace(parts[1]))
 		cmdLine := parts[2]
 
-		// Skip non-session processes (e.g. claude-watch itself, helper processes)
 		sessionID := extractFlag(sessionIDRe, cmdLine)
 		if sessionID == "" {
 			continue
 		}
 
-		info := Info{
+		results = append(results, Info{
 			PID:       pid,
 			SessionID: sessionID,
 			WorkDir:   extractFlag(addDirRe, cmdLine),
 			StartTime: startTime,
-		}
-		results = append(results, info)
+		})
 	}
 	return results, nil
 }
 
+// parseUnixLine parses a single line from `ps axo pid=,lstart=,command=`.
+// Format: "  12345 Sun Apr  6 10:53:38 2026 /path/to/claude --session-id ..."
+// The lstart field is always 24 characters wide.
 func parseUnixLine(line string) Info {
-	// Extract session ID and add-dir from the command line portion
-	sessionID := extractFlag(sessionIDRe, line)
-	workDir := extractFlag(addDirRe, line)
-
-	// Try to extract PID (first field)
 	fields := strings.Fields(line)
-	pid := 0
-	if len(fields) > 0 {
-		pid, _ = strconv.Atoi(fields[0])
+	if len(fields) < 2 {
+		return Info{}
 	}
+
+	pid, err := strconv.Atoi(fields[0])
+	if err != nil {
+		return Info{}
+	}
+
+	// lstart format: "Sun Apr  6 10:53:38 2026" — parse from fields[1:6]
+	// But double-space in day can cause field splitting issues. Use a fixed approach:
+	// After the PID, the next 24 chars (after trimming) are the lstart date.
+	pidStr := fields[0]
+	rest := strings.TrimSpace(line[strings.Index(line, pidStr)+len(pidStr):])
+
+	var startTime time.Time
+	// lstart is 24 chars: "Sun Apr  6 10:53:38 2026"
+	if len(rest) >= 24 {
+		dateStr := rest[:24]
+		// Go reference time: Mon Jan 2 15:04:05 2006
+		// lstart format:     Sun Apr  6 10:53:38 2026
+		startTime, _ = time.Parse("Mon Jan  2 15:04:05 2006", dateStr)
+		if startTime.IsZero() {
+			// Try single-space day variant: "Mon Apr 16 10:53:38 2026"
+			startTime, _ = time.Parse("Mon Jan 2 15:04:05 2006", strings.TrimSpace(dateStr))
+		}
+		rest = rest[24:]
+	}
+
+	// rest is now the command line
+	cmdLine := strings.TrimSpace(rest)
+
+	sessionID := extractFlag(sessionIDRe, cmdLine)
+	workDir := extractFlag(addDirRe, cmdLine)
 
 	return Info{
 		PID:       pid,
 		SessionID: sessionID,
 		WorkDir:   workDir,
+		StartTime: startTime,
 	}
 }
 
