@@ -6,11 +6,13 @@ package ui
 
 import (
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/term"
 	"github.com/tarikguney/claude-watch/internal/session"
 )
 
@@ -26,31 +28,87 @@ var (
 	pidStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 
 	statusStyles = map[session.Status]lipgloss.Style{
-		session.StatusResponding: lipgloss.NewStyle().Background(lipgloss.Color("10")).Foreground(lipgloss.Color("0")).Bold(true),  // Green bg
-		session.StatusIdle:       lipgloss.NewStyle().Background(lipgloss.Color("240")).Foreground(lipgloss.Color("15")),           // Gray bg
-		session.StatusDone:       lipgloss.NewStyle().Background(lipgloss.Color("12")).Foreground(lipgloss.Color("15")).Bold(true), // Blue bg
+		session.StatusResponding:  lipgloss.NewStyle().Background(lipgloss.Color("10")).Foreground(lipgloss.Color("0")).Bold(true),  // Green bg
+		session.StatusIdle:        lipgloss.NewStyle().Background(lipgloss.Color("240")).Foreground(lipgloss.Color("15")),           // Gray bg
+		session.StatusDone:        lipgloss.NewStyle().Background(lipgloss.Color("12")).Foreground(lipgloss.Color("15")).Bold(true), // Blue bg
 		session.StatusError:       lipgloss.NewStyle().Background(lipgloss.Color("9")).Foreground(lipgloss.Color("15")).Bold(true),  // Red bg
-		session.StatusInterrupted: lipgloss.NewStyle().Background(lipgloss.Color("11")).Foreground(lipgloss.Color("0")).Bold(true), // Yellow bg
+		session.StatusInterrupted: lipgloss.NewStyle().Background(lipgloss.Color("11")).Foreground(lipgloss.Color("0")).Bold(true),  // Yellow bg
 	}
 )
 
-// Column widths
-const (
-	colPID     = 7
-	colProject = 16
-	colStatus  = 12
-	colAction  = 36
-	colDur     = 10
-)
+// cols holds computed column widths for a render pass.
+type cols struct {
+	pid     int
+	project int
+	status  int
+	action  int
+	dur     int
+}
 
-const (
-	colPIDCompact     = 7
-	colProjectCompact = 12
-	colStatusCompact  = 12
-	colTaskCompact    = 0
-	colActionCompact  = 32
-	colDurCompact     = 10
-)
+func getTerminalWidth() int {
+	w, _, err := term.GetSize(os.Stdout.Fd())
+	if err != nil || w <= 0 {
+		return 120
+	}
+	return w
+}
+
+// computeCols calculates column widths from actual session data,
+// then expands the ACTION column to fill the terminal width.
+func computeCols(sessions []session.State, now time.Time) cols {
+	// Start with minimum widths based on header text + padding
+	c := cols{
+		pid:     len("PID") + 2,
+		project: len("PROJECT") + 2,
+		status:  len("STATUS") + 2,
+		action:  len("CURRENT ACTION") + 2,
+		dur:     len("DURATION") + 2,
+	}
+
+	// Expand to fit content
+	for _, s := range sessions {
+		if w := len(s.ProjectName) + 2; w > c.project {
+			c.project = w
+		}
+		if w := len(string(s.Status)) + 2; w > c.status {
+			c.status = w
+		}
+		action := actionForStatus(s)
+		if w := len(action) + 2; w > c.action {
+			c.action = w
+		}
+		dur := ""
+		if !s.StartTime.IsZero() {
+			dur = session.FormatDuration(now.Sub(s.StartTime))
+		}
+		if w := len(dur) + 2; w > c.dur {
+			c.dur = w
+		}
+		pidStr := ""
+		if s.PID > 0 {
+			pidStr = fmt.Sprintf("%d", s.PID)
+		}
+		if w := len(pidStr) + 2; w > c.pid {
+			c.pid = w
+		}
+	}
+
+	// Cap project to prevent one wide name from eating all space
+	if c.project > 30 {
+		c.project = 30
+	}
+
+	// Expand ACTION to fill remaining terminal width
+	termW := getTerminalWidth()
+	separators := 4 * 3 // 4 " │ " separators
+	fixed := c.pid + c.project + c.status + c.dur + separators
+	remaining := termW - fixed
+	if remaining > c.action {
+		c.action = remaining
+	}
+
+	return c
+}
 
 // joinCols joins pre-padded cells with a styled vertical bar separator.
 func joinCols(cells []string) string {
@@ -83,6 +141,8 @@ func Render(sessions []session.State, compact bool, hiddenCount int) string {
 		return sessions[i].PID < sessions[j].PID
 	})
 
+	c := computeCols(sessions, now)
+
 	title := titleStyle.Render("CLAUDE WATCH")
 	subtitle := durationStyle.Render("— monitoring your Claude Code sessions")
 	timestamp := durationStyle.Render(now.Format("01/02 15:04:05"))
@@ -92,35 +152,20 @@ func Render(sessions []session.State, compact bool, hiddenCount int) string {
 	}
 	b.WriteString(title + " " + subtitle + "  " + timestamp + hidden + "\n")
 
-	if compact {
-		tw := totalWidth([]int{colPIDCompact, colProjectCompact, colStatusCompact, colActionCompact, colDurCompact})
-		b.WriteString(hline("─", tw) + "\n")
-		b.WriteString(joinCols([]string{
-			colHeaderStyle.Render(pad("PID", colPIDCompact)),
-			colHeaderStyle.Render(pad("PROJECT", colProjectCompact)),
-			colHeaderStyle.Render(pad("STATUS", colStatusCompact)),
-			colHeaderStyle.Render(pad("CURRENT ACTION", colActionCompact)),
-			colHeaderStyle.Render(pad("DURATION", colDurCompact)),
-		}) + "\n")
-		b.WriteString(hline("─", tw) + "\n")
+	tw := totalWidth([]int{c.pid, c.project, c.status, c.action, c.dur})
+	b.WriteString(hline("─", tw) + "\n")
+	b.WriteString(joinCols([]string{
+		colHeaderStyle.Render(pad("PID", c.pid)),
+		colHeaderStyle.Render(pad("PROJECT", c.project)),
+		colHeaderStyle.Render(pad("STATUS", c.status)),
+		colHeaderStyle.Render(pad("CURRENT ACTION", c.action)),
+		colHeaderStyle.Render(pad("DURATION", c.dur)),
+	}) + "\n")
+	b.WriteString(hline("─", tw) + "\n")
 
-		for _, s := range sessions {
-			b.WriteString(renderRowCompact(s, now) + "\n")
-		}
-	} else {
-		tw := totalWidth([]int{colPID, colProject, colStatus, colAction, colDur})
-		b.WriteString(hline("─", tw) + "\n")
-		b.WriteString(joinCols([]string{
-			colHeaderStyle.Render(pad("PID", colPID)),
-			colHeaderStyle.Render(pad("PROJECT", colProject)),
-			colHeaderStyle.Render(pad("STATUS", colStatus)),
-			colHeaderStyle.Render(pad("CURRENT ACTION", colAction)),
-			colHeaderStyle.Render(pad("DURATION", colDur)),
-		}) + "\n")
-		b.WriteString(hline("─", tw) + "\n")
-
-		for i, s := range sessions {
-			b.WriteString(renderRow(s, now) + "\n")
+	for i, s := range sessions {
+		b.WriteString(renderRow(s, now, c) + "\n")
+		if !compact {
 			prompt := s.LastPrompt
 			if prompt == "" {
 				prompt = s.OriginalTask
@@ -144,7 +189,7 @@ func Render(sessions []session.State, compact bool, hiddenCount int) string {
 	return b.String()
 }
 
-func renderRow(s session.State, now time.Time) string {
+func renderRow(s session.State, now time.Time, c cols) string {
 	dur := ""
 	if !s.StartTime.IsZero() {
 		dur = session.FormatDuration(now.Sub(s.StartTime))
@@ -158,33 +203,11 @@ func renderRow(s session.State, now time.Time) string {
 	}
 
 	return joinCols([]string{
-		pidStyle.Render(pad(pidStr, colPID)),
-		projectStyle.Render(pad(s.ProjectName, colProject)),
-		styledStatus(s.Status, colStatus),
-		actionStyle.Render(pad(action, colAction)),
-		durationStyle.Render(pad(dur, colDur)),
-	})
-}
-
-func renderRowCompact(s session.State, now time.Time) string {
-	dur := ""
-	if !s.StartTime.IsZero() {
-		dur = session.FormatDuration(now.Sub(s.StartTime))
-	}
-
-	action := actionForStatus(s)
-
-	pidStr := ""
-	if s.PID > 0 {
-		pidStr = fmt.Sprintf("%d", s.PID)
-	}
-
-	return joinCols([]string{
-		pidStyle.Render(pad(pidStr, colPIDCompact)),
-		projectStyle.Render(pad(s.ProjectName, colProjectCompact)),
-		styledStatus(s.Status, colStatusCompact),
-		actionStyle.Render(pad(action, colActionCompact)),
-		durationStyle.Render(pad(dur, colDurCompact)),
+		pidStyle.Render(pad(pidStr, c.pid)),
+		projectStyle.Render(pad(s.ProjectName, c.project)),
+		styledStatus(s.Status, c.status),
+		actionStyle.Render(pad(action, c.action)),
+		durationStyle.Render(pad(dur, c.dur)),
 	})
 }
 
