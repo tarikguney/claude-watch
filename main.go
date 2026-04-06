@@ -17,14 +17,21 @@ import (
 	"github.com/tarikguney/claude-watch/internal/ui"
 )
 
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+)
+
 func main() {
 	var refresh time.Duration
 	var claudeDir string
 	var compact bool
 
 	rootCmd := &cobra.Command{
-		Use:   "claude-watch",
-		Short: "Monitor Claude Code sessions in real time",
+		Use:     "claude-watch",
+		Short:   "Monitor Claude Code sessions in real time",
+		Version: fmt.Sprintf("%s (commit: %s, built: %s)", version, commit, date),
 		Long: `A zero-setup CLI dashboard for monitoring Claude Code agents.
 Discovers sessions automatically from ~/.claude/projects/.
 
