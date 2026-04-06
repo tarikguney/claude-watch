@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/tarikguney/claude-watch/internal/parser"
+	"github.com/tarikguney/claude-watch/internal/process"
 )
 
 // Scanner discovers and manages Claude Code session files.
@@ -123,9 +124,10 @@ func (s *Scanner) LoadSession(path string) error {
 	}
 
 	isError := CheckLastToolResultError(tailRecords)
+	lastHasToolUse := lastRecordHasToolUse(lastRec)
 	status := StatusIdle
 	if len(tailRecords) > 0 {
-		status = DeriveStatus(lastRec, isError, now)
+		status = DeriveStatus(lastRec, isError, now, state.PID > 0)
 	}
 
 	var startTime time.Time
@@ -146,20 +148,18 @@ func (s *Scanner) LoadSession(path string) error {
 	state.ProjectName = projectName
 	state.Cwd = cwd
 	state.OriginalTask = originalTask
-	if lastPrompt != "" {
-		state.LastPrompt = lastPrompt
-	}
-	if action != "" {
-		state.CurrentAction = action
-	}
+	state.LastPrompt = lastPrompt
+	state.CurrentAction = action
 	state.Status = status
-	if model != "" {
-		state.Model = model
-	}
+	state.Model = model
 	state.StartTime = startTime
 	state.LastUpdate = now
 	state.FileOffset = info.Size()
 	state.FileModTime = info.ModTime()
+	state.LastRecordType = lastRec.Type
+	state.LastRecordTimestamp = lastRec.Timestamp
+	state.LastToolResultError = isError
+	state.LastHasToolUse = lastHasToolUse
 	if lastRec.SessionID != "" {
 		state.SessionID = lastRec.SessionID
 	}
@@ -205,13 +205,18 @@ func (s *Scanner) UpdateSession(path string) error {
 	model := ExtractModel(newRecords)
 	lastPrompt := ExtractLastPrompt(newRecords)
 	isError := CheckLastToolResultError(newRecords)
-	status := DeriveStatus(lastRec, isError, now)
+	lastHasToolUse := lastRecordHasToolUse(lastRec)
+	status := DeriveStatus(lastRec, isError, now, state.PID > 0)
 
 	s.mu.Lock()
 	state.FileOffset = newOffset
 	state.LastUpdate = now
 	state.FileModTime = now
 	state.Status = status
+	state.LastRecordType = lastRec.Type
+	state.LastRecordTimestamp = lastRec.Timestamp
+	state.LastToolResultError = isError
+	state.LastHasToolUse = lastHasToolUse
 	if action != "" {
 		state.CurrentAction = action
 	}
@@ -310,6 +315,7 @@ func deduplicateByCwd(sessions []State) []State {
 		if key == "" {
 			key = s.FilePath // fallback for sessions without cwd
 		}
+		key = filepath.Clean(key)
 		existing, ok := best[key]
 		if !ok || s.FileModTime.After(existing.FileModTime) {
 			best[key] = s
@@ -320,6 +326,158 @@ func deduplicateByCwd(sessions []State) []State {
 		result = append(result, s)
 	}
 	return result
+}
+
+// MatchProcesses associates running Claude processes with their session states.
+// Strategy: use the process's --session-id to find which project directory the
+// session lives in (~/.claude/projects/<encoded-project>/<session-id>.jsonl),
+// then pick the most recently modified .jsonl in that same directory.
+// This handles the case where Claude creates new sessions within the same process.
+func (s *Scanner) MatchProcesses(procs []process.Info) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Clear all PIDs first (process may have exited)
+	for _, state := range s.sessions {
+		state.PID = 0
+	}
+
+	// Build lookup: filename (without .jsonl) → file path
+	fileSessionToPath := make(map[string]string)
+	for path := range s.sessions {
+		base := strings.TrimSuffix(filepath.Base(path), ".jsonl")
+		if base != "" {
+			fileSessionToPath[base] = path
+		}
+	}
+
+	for _, proc := range procs {
+		if proc.SessionID == "" {
+			continue
+		}
+
+		// Find the original session file to determine the project directory
+		origPath, ok := fileSessionToPath[proc.SessionID]
+		if !ok {
+			// Session file not yet discovered — try to find it on disk
+			targetFile := proc.SessionID + ".jsonl"
+			projectsDir := filepath.Join(s.claudeDir, "projects")
+			filepath.Walk(projectsDir, func(path string, info os.FileInfo, err error) error {
+				if ok || err != nil || info == nil || info.IsDir() {
+					return nil
+				}
+				if filepath.Base(path) == targetFile {
+					origPath = path
+					ok = true
+					// Register it so LoadAll will pick it up
+					if _, exists := s.sessions[path]; !exists {
+						s.sessions[path] = &State{FilePath: path}
+					}
+				}
+				return nil
+			})
+		}
+
+		if !ok {
+			// Can't find session file at all — create placeholder
+			key := "process:" + proc.SessionID
+			projectName := filepath.Base(proc.WorkDir)
+			if projectName == "" || projectName == "." {
+				projectName = proc.SessionID[:8]
+			}
+			s.sessions[key] = &State{
+				SessionID:   proc.SessionID,
+				PID:         proc.PID,
+				Cwd:         proc.WorkDir,
+				ProjectName: projectName,
+				Status:      StatusIdle,
+				StartTime:   proc.StartTime,
+				LastUpdate:  time.Now(),
+				FileModTime: time.Now(),
+			}
+			continue
+		}
+
+		// Found the project directory — now find the most recent session in it
+		projectDir := filepath.Dir(origPath)
+		bestPath := ""
+		var bestMod time.Time
+		for path, state := range s.sessions {
+			if filepath.Dir(path) == projectDir && state.FileModTime.After(bestMod) {
+				bestPath = path
+				bestMod = state.FileModTime
+			}
+		}
+		if bestPath != "" {
+			s.sessions[bestPath].PID = proc.PID
+			if s.sessions[bestPath].Cwd == "" && proc.WorkDir != "" {
+				s.sessions[bestPath].Cwd = proc.WorkDir
+			}
+			if s.sessions[bestPath].ProjectName == "" && proc.WorkDir != "" {
+				s.sessions[bestPath].ProjectName = filepath.Base(proc.WorkDir)
+			}
+		}
+	}
+
+	// Re-derive status for sessions with a running process.
+	// LoadSession may have computed status before PID was known.
+	for _, state := range s.sessions {
+		if state.PID <= 0 || state.LastRecordType == "" {
+			continue
+		}
+		if state.Status == StatusDone {
+			continue
+		}
+		if state.LastToolResultError {
+			state.Status = StatusError
+			continue
+		}
+		switch state.LastRecordType {
+		case "assistant":
+			if state.LastHasToolUse {
+				state.Status = StatusActive
+			} else {
+				state.Status = StatusIdle
+			}
+		case "user":
+			state.Status = StatusThinking
+		}
+	}
+}
+
+// lastRecordHasToolUse checks if a record is an assistant message containing a tool_use block.
+func lastRecordHasToolUse(rec parser.Record) bool {
+	if rec.Type != "assistant" {
+		return false
+	}
+	mc, err := parser.ParseMessageContent(rec)
+	if err != nil {
+		return false
+	}
+	blocks, err := parser.ParseContentBlocks(mc)
+	if err != nil {
+		return false
+	}
+	for _, b := range blocks {
+		if b.Type == "tool_use" {
+			return true
+		}
+	}
+	return false
+}
+
+// RunningSessions returns only sessions that have a running process (PID > 0).
+func (s *Scanner) RunningSessions() []State {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	result := make([]State, 0)
+	for _, state := range s.sessions {
+		if state.PID > 0 {
+			result = append(result, *state)
+		}
+	}
+	return deduplicateByCwd(result)
 }
 
 func extractCwd(records []parser.Record) string {

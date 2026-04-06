@@ -14,7 +14,7 @@ import (
 
 func TestDeriveStatus_Result(t *testing.T) {
 	rec := parser.Record{Type: "result", Timestamp: time.Now().Format(time.RFC3339Nano)}
-	status := DeriveStatus(rec, false, time.Now())
+	status := DeriveStatus(rec, false, time.Now(), false)
 	if status != StatusDone {
 		t.Errorf("expected Done, got %s", status)
 	}
@@ -26,7 +26,7 @@ func TestDeriveStatus_Error(t *testing.T) {
 		Timestamp: time.Now().Format(time.RFC3339Nano),
 		Message:   json.RawMessage(`{"role":"assistant","content":[{"type":"text","text":"oops"}]}`),
 	}
-	status := DeriveStatus(rec, true, time.Now())
+	status := DeriveStatus(rec, true, time.Now(), false)
 	if status != StatusError {
 		t.Errorf("expected Error, got %s", status)
 	}
@@ -38,7 +38,7 @@ func TestDeriveStatus_Active(t *testing.T) {
 		Timestamp: time.Now().Format(time.RFC3339Nano),
 		Message:   json.RawMessage(`{"role":"assistant","content":[{"type":"tool_use","name":"Read","input":{"file_path":"x.go"}}]}`),
 	}
-	status := DeriveStatus(rec, false, time.Now())
+	status := DeriveStatus(rec, false, time.Now(), false)
 	if status != StatusActive {
 		t.Errorf("expected Active, got %s", status)
 	}
@@ -50,7 +50,7 @@ func TestDeriveStatus_AssistantTextOnly(t *testing.T) {
 		Timestamp: time.Now().Format(time.RFC3339Nano),
 		Message:   json.RawMessage(`{"role":"assistant","content":[{"type":"text","text":"Here is my answer"}]}`),
 	}
-	status := DeriveStatus(rec, false, time.Now())
+	status := DeriveStatus(rec, false, time.Now(), false)
 	if status != StatusIdle {
 		t.Errorf("expected Idle, got %s", status)
 	}
@@ -62,7 +62,7 @@ func TestDeriveStatus_Thinking(t *testing.T) {
 		Timestamp: time.Now().Format(time.RFC3339Nano),
 		Message:   json.RawMessage(`{"role":"user","content":"do something"}`),
 	}
-	status := DeriveStatus(rec, false, time.Now())
+	status := DeriveStatus(rec, false, time.Now(), false)
 	if status != StatusThinking {
 		t.Errorf("expected Thinking, got %s", status)
 	}
@@ -75,7 +75,7 @@ func TestDeriveStatus_Idle_OldTimestamp(t *testing.T) {
 		Timestamp: oldTime.Format(time.RFC3339Nano),
 		Message:   json.RawMessage(`{"role":"assistant","content":[{"type":"tool_use","name":"Read","input":{}}]}`),
 	}
-	status := DeriveStatus(rec, false, time.Now())
+	status := DeriveStatus(rec, false, time.Now(), false)
 	if status != StatusIdle {
 		t.Errorf("expected Idle, got %s", status)
 	}
@@ -83,7 +83,7 @@ func TestDeriveStatus_Idle_OldTimestamp(t *testing.T) {
 
 func TestDeriveStatus_ResultTakesPriority(t *testing.T) {
 	rec := parser.Record{Type: "result", Timestamp: time.Now().Add(-10 * time.Minute).Format(time.RFC3339Nano)}
-	status := DeriveStatus(rec, true, time.Now())
+	status := DeriveStatus(rec, true, time.Now(), false)
 	if status != StatusDone {
 		t.Errorf("expected Done (result type takes priority), got %s", status)
 	}

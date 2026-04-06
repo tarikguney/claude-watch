@@ -13,6 +13,7 @@ import (
 
 	"github.com/muesli/termenv"
 	"github.com/spf13/cobra"
+	"github.com/tarikguney/claude-watch/internal/process"
 	"github.com/tarikguney/claude-watch/internal/session"
 	"github.com/tarikguney/claude-watch/internal/ui"
 )
@@ -72,16 +73,28 @@ func run(claudeDir string, refresh time.Duration, compact bool, maxAge time.Dura
 	ticker := time.NewTicker(refresh)
 	defer ticker.Stop()
 
-	// Initial render
+	// Initial process discovery + render
+	refreshProcesses(scanner)
 	render(scanner, compact, maxAge)
 
 	for range ticker.C {
-		// LoadAll only loads newly discovered sessions (found by the watcher)
 		scanner.LoadAll()
+		refreshProcesses(scanner)
 		render(scanner, compact, maxAge)
 	}
 
 	return nil
+}
+
+// refreshProcesses discovers running Claude processes and matches them to sessions.
+func refreshProcesses(scanner *session.Scanner) {
+	procs, err := process.ListClaude()
+	if err != nil {
+		return // silently ignore process discovery errors
+	}
+	scanner.MatchProcesses(procs)
+	// Load any newly discovered sessions from process matching
+	scanner.LoadAll()
 }
 
 var output = termenv.NewOutput(os.Stdout)
@@ -89,10 +102,8 @@ var output = termenv.NewOutput(os.Stdout)
 func render(scanner *session.Scanner, compact bool, maxAge time.Duration) {
 	output.ClearScreen()
 	output.MoveCursor(1, 1)
-	allSessions := scanner.Sessions()
-	sessions := scanner.RecentSessions(maxAge)
-	hidden := len(allSessions) - len(sessions)
-	dashboard := ui.Render(sessions, compact, hidden)
+	sessions := scanner.RunningSessions()
+	dashboard := ui.Render(sessions, compact, 0)
 	fmt.Print(dashboard)
 }
 

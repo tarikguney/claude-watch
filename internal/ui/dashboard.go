@@ -22,6 +22,7 @@ var (
 	promptStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("#7DC4A3"))             // Soft mint/teal
 	actionStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("15"))
 	durationStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	pidStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 
 	statusStyles = map[session.Status]lipgloss.Style{
 		session.StatusActive:     lipgloss.NewStyle().Foreground(lipgloss.Color("10")),  // Green
@@ -35,6 +36,7 @@ var (
 
 // Column widths
 const (
+	colPID     = 7
 	colProject = 16
 	colStatus  = 10
 	colAction  = 36
@@ -42,6 +44,7 @@ const (
 )
 
 const (
+	colPIDCompact     = 7
 	colProjectCompact = 12
 	colStatusCompact  = 10
 	colTaskCompact    = 0
@@ -75,14 +78,9 @@ func Render(sessions []session.State, compact bool, hiddenCount int) string {
 	now := time.Now()
 	var b strings.Builder
 
-	// Sort: Active/Responding/Thinking first, then by last update descending
+	// Sort by PID for stable row ordering (no jumping when status changes)
 	sort.Slice(sessions, func(i, j int) bool {
-		pi := statusPriority(sessions[i].Status)
-		pj := statusPriority(sessions[j].Status)
-		if pi != pj {
-			return pi < pj
-		}
-		return sessions[i].LastUpdate.After(sessions[j].LastUpdate)
+		return sessions[i].PID < sessions[j].PID
 	})
 
 	title := titleStyle.Render("CLAUDE WATCH")
@@ -95,9 +93,10 @@ func Render(sessions []session.State, compact bool, hiddenCount int) string {
 	b.WriteString(title + " " + subtitle + "  " + timestamp + hidden + "\n")
 
 	if compact {
-		tw := totalWidth([]int{colProjectCompact, colStatusCompact, colActionCompact, colDurCompact})
+		tw := totalWidth([]int{colPIDCompact, colProjectCompact, colStatusCompact, colActionCompact, colDurCompact})
 		b.WriteString(hline("─", tw) + "\n")
 		b.WriteString(joinCols([]string{
+			colHeaderStyle.Render(pad("PID", colPIDCompact)),
 			colHeaderStyle.Render(pad("PROJECT", colProjectCompact)),
 			colHeaderStyle.Render(pad("STATUS", colStatusCompact)),
 			colHeaderStyle.Render(pad("CURRENT ACTION", colActionCompact)),
@@ -109,9 +108,10 @@ func Render(sessions []session.State, compact bool, hiddenCount int) string {
 			b.WriteString(renderRowCompact(s, now) + "\n")
 		}
 	} else {
-		tw := totalWidth([]int{colProject, colStatus, colAction, colDur})
+		tw := totalWidth([]int{colPID, colProject, colStatus, colAction, colDur})
 		b.WriteString(hline("─", tw) + "\n")
 		b.WriteString(joinCols([]string{
+			colHeaderStyle.Render(pad("PID", colPID)),
 			colHeaderStyle.Render(pad("PROJECT", colProject)),
 			colHeaderStyle.Render(pad("STATUS", colStatus)),
 			colHeaderStyle.Render(pad("CURRENT ACTION", colAction)),
@@ -147,12 +147,15 @@ func renderRow(s session.State, now time.Time) string {
 		dur = session.FormatDuration(now.Sub(s.StartTime))
 	}
 
-	action := s.CurrentAction
-	if s.Status == session.StatusDone {
-		action = "Completed"
+	action := actionForStatus(s)
+
+	pidStr := ""
+	if s.PID > 0 {
+		pidStr = fmt.Sprintf("%d", s.PID)
 	}
 
 	return joinCols([]string{
+		pidStyle.Render(pad(pidStr, colPID)),
 		projectStyle.Render(pad(s.ProjectName, colProject)),
 		styledStatus(s.Status, colStatus),
 		actionStyle.Render(pad(action, colAction)),
@@ -166,12 +169,15 @@ func renderRowCompact(s session.State, now time.Time) string {
 		dur = session.FormatDuration(now.Sub(s.StartTime))
 	}
 
-	action := s.CurrentAction
-	if s.Status == session.StatusDone {
-		action = "Completed"
+	action := actionForStatus(s)
+
+	pidStr := ""
+	if s.PID > 0 {
+		pidStr = fmt.Sprintf("%d", s.PID)
 	}
 
 	return joinCols([]string{
+		pidStyle.Render(pad(pidStr, colPIDCompact)),
 		projectStyle.Render(pad(s.ProjectName, colProjectCompact)),
 		styledStatus(s.Status, colStatusCompact),
 		actionStyle.Render(pad(action, colActionCompact)),
@@ -192,6 +198,19 @@ func pad(s string, width int) string {
 		return s[:width]
 	}
 	return s + strings.Repeat(" ", width-len(s))
+}
+
+// actionForStatus returns the action text appropriate for the session's status.
+// Only show the current action when Claude is actively working.
+func actionForStatus(s session.State) string {
+	switch s.Status {
+	case session.StatusActive, session.StatusThinking:
+		return s.CurrentAction
+	case session.StatusDone:
+		return "Completed"
+	default:
+		return ""
+	}
 }
 
 func statusPriority(s session.Status) int {

@@ -103,36 +103,36 @@ func TestRender_SortOrder(t *testing.T) {
 	now := time.Now()
 	sessions := []session.State{
 		{
-			ProjectName: "done-proj",
-			Status:      session.StatusDone,
-			LastUpdate:  now,
-			StartTime:   now.Add(-10 * time.Minute),
-		},
-		{
-			ProjectName: "active-proj",
+			ProjectName: "high-pid",
+			PID:         300,
 			Status:      session.StatusActive,
 			LastUpdate:  now,
 			StartTime:   now.Add(-5 * time.Minute),
 		},
 		{
-			ProjectName: "idle-proj",
+			ProjectName: "low-pid",
+			PID:         100,
 			Status:      session.StatusIdle,
-			LastUpdate:  now.Add(-6 * time.Minute),
+			LastUpdate:  now,
+			StartTime:   now.Add(-10 * time.Minute),
+		},
+		{
+			ProjectName: "mid-pid",
+			PID:         200,
+			Status:      session.StatusDone,
+			LastUpdate:  now,
 			StartTime:   now.Add(-20 * time.Minute),
 		},
 	}
 
 	output := Render(sessions, false, 0)
 
-	activeIdx := strings.Index(output, "active-proj")
-	idleIdx := strings.Index(output, "idle-proj")
-	doneIdx := strings.Index(output, "done-proj")
+	lowIdx := strings.Index(output, "low-pid")
+	midIdx := strings.Index(output, "mid-pid")
+	highIdx := strings.Index(output, "high-pid")
 
-	if activeIdx > idleIdx || activeIdx > doneIdx {
-		t.Error("active sessions should appear first")
-	}
-	if idleIdx > doneIdx {
-		t.Error("idle sessions should appear before done")
+	if lowIdx > midIdx || midIdx > highIdx {
+		t.Error("sessions should be sorted by PID ascending")
 	}
 }
 

@@ -17,7 +17,7 @@ import (
 type Status string
 
 const (
-	StatusActive     Status = "Active"
+	StatusActive     Status = "Tool Use"
 	StatusResponding Status = "Responding"
 	StatusThinking   Status = "Thinking"
 	StatusIdle       Status = "Idle"
@@ -28,6 +28,7 @@ const (
 // State holds the derived state for a single Claude Code session.
 type State struct {
 	SessionID   string
+	PID         int // OS process ID if the session has a running claude process
 	FilePath    string
 	ProjectName string
 	Cwd         string
@@ -40,6 +41,12 @@ type State struct {
 	LastUpdate  time.Time
 	FileOffset  int64
 	FileModTime time.Time
+
+	// Cached from last record for re-deriving status after PID changes
+	LastRecordType      string
+	LastRecordTimestamp  string
+	LastToolResultError bool
+	LastHasToolUse      bool
 }
 
 // idleThreshold is the duration after which a session with no result is considered Idle.
@@ -49,7 +56,8 @@ const idleThreshold = 5 * time.Minute
 const activeThreshold = 2 * time.Minute
 
 // DeriveStatus computes the session status from the last record and its timestamp.
-func DeriveStatus(rec parser.Record, lastToolResultIsError bool, now time.Time) Status {
+// processRunning indicates whether the session has a live OS process (PID > 0).
+func DeriveStatus(rec parser.Record, lastToolResultIsError bool, now time.Time, processRunning bool) Status {
 	recTime, err := time.Parse(time.RFC3339Nano, rec.Timestamp)
 	if err != nil {
 		recTime = time.Now()
@@ -60,7 +68,9 @@ func DeriveStatus(rec parser.Record, lastToolResultIsError bool, now time.Time) 
 		return StatusDone
 	}
 
-	if age > idleThreshold {
+	// Only mark Idle from timestamp age if there's no running process.
+	// A running process means Claude is alive — it just hasn't written to the file recently.
+	if age > idleThreshold && !processRunning {
 		return StatusIdle
 	}
 
@@ -85,14 +95,15 @@ func DeriveStatus(rec parser.Record, lastToolResultIsError bool, now time.Time) 
 				break
 			}
 		}
-		if hasToolUse && age < activeThreshold {
+		if hasToolUse {
 			return StatusActive
 		}
-		// Text-only assistant message means Claude finished and is waiting for input
+		// Text-only assistant message — Claude finished and is waiting for input
 		return StatusIdle
 
 	case "user":
-		if age < activeThreshold {
+		// User sent a message — Claude is thinking
+		if age < activeThreshold || processRunning {
 			return StatusThinking
 		}
 		return StatusIdle
