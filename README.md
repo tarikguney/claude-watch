@@ -9,13 +9,13 @@ Run `claude-watch` and instantly see what all your Claude Code sessions are doin
 Claude Code writes append-only JSONL transcripts to `~/.claude/projects/`. claude-watch watches these files, parses the tail of each session, and renders a continuously-updating dashboard:
 
 ```
-AGENT MONITOR                                          04/05 14:23:45
-─────────────────────────────────────────────────────────────────────
-PROJECT     STATUS   TASK                        CURRENT ACTION                DUR
-myapp       Active   Add auth to API endpoints   Editing src/middleware.ts      12m
-webapp      Active   Fix login page CSS          Running npm test              05m
-backend     Idle     Refactor database layer     Last: Wrote db/schema.ts      18m
-cli-tool    Done     Add --verbose flag          Completed                     08m
+CLAUDE WATCH                                           04/05 14:23:45
+─────────────────────────────────────────────────────────────────────────────────────────────────
+PROJECT        STATUS       TASK                           CURRENT ACTION                     DUR
+myapp          Active       Add auth to API endpoints      Editing middleware.ts               12m
+webapp         Active       Fix login page CSS             Running npm test                    5m
+backend        Idle         Refactor database layer        Writing schema.ts                   18m
+cli-tool       Done         Add --verbose flag             Completed                           8m
 ```
 
 No hooks to configure, no agents to register, no setup. It reads what's already on disk.

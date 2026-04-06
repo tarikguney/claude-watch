@@ -8,8 +8,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"time"
 
+	"github.com/muesli/termenv"
 	"github.com/spf13/cobra"
 	"github.com/tarikguney/claude-watch/internal/session"
 	"github.com/tarikguney/claude-watch/internal/ui"
@@ -74,12 +76,14 @@ func run(claudeDir string, refresh time.Duration, compact bool) error {
 	return nil
 }
 
+var output = termenv.NewOutput(os.Stdout)
+
 func render(scanner *session.Scanner, compact bool) {
-	// Clear screen and move cursor to top
-	fmt.Print("\033[H\033[2J")
+	output.ClearScreen()
+	output.MoveCursor(1, 1)
 	sessions := scanner.Sessions()
-	output := ui.Render(sessions, compact)
-	fmt.Print(output)
+	dashboard := ui.Render(sessions, compact)
+	fmt.Print(dashboard)
 }
 
 func defaultClaudeDir() string {
@@ -87,5 +91,16 @@ func defaultClaudeDir() string {
 	if err != nil {
 		return filepath.Join("~", ".claude")
 	}
+
+	// On Windows, check %APPDATA%\.claude first, fall back to %USERPROFILE%\.claude
+	if runtime.GOOS == "windows" {
+		if appData := os.Getenv("APPDATA"); appData != "" {
+			candidate := filepath.Join(appData, ".claude")
+			if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+				return candidate
+			}
+		}
+	}
+
 	return filepath.Join(home, ".claude")
 }
