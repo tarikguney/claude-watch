@@ -53,6 +53,30 @@ func (r Record) IsSystemInjectedUser() bool {
 			if strings.HasPrefix(trimmed, "<") {
 				return true
 			}
+			if strings.HasPrefix(trimmed, "[Request interrupted by user") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// IsInterruptRecord returns true if this is a "[Request interrupted by user]" record.
+func (r Record) IsInterruptRecord() bool {
+	if r.Type != "user" {
+		return false
+	}
+	mc, err := ParseMessageContent(r)
+	if err != nil {
+		return false
+	}
+	blocks, err := ParseContentBlocks(mc)
+	if err != nil {
+		return false
+	}
+	for _, b := range blocks {
+		if b.Type == "text" && strings.HasPrefix(strings.TrimSpace(b.Text), "[Request interrupted by user") {
+			return true
 		}
 	}
 	return false

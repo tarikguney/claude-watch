@@ -29,7 +29,8 @@ var (
 		session.StatusResponding: lipgloss.NewStyle().Background(lipgloss.Color("10")).Foreground(lipgloss.Color("0")).Bold(true),  // Green bg
 		session.StatusIdle:       lipgloss.NewStyle().Background(lipgloss.Color("240")).Foreground(lipgloss.Color("15")),           // Gray bg
 		session.StatusDone:       lipgloss.NewStyle().Background(lipgloss.Color("12")).Foreground(lipgloss.Color("15")).Bold(true), // Blue bg
-		session.StatusError:      lipgloss.NewStyle().Background(lipgloss.Color("9")).Foreground(lipgloss.Color("15")).Bold(true),  // Red bg
+		session.StatusError:       lipgloss.NewStyle().Background(lipgloss.Color("9")).Foreground(lipgloss.Color("15")).Bold(true),  // Red bg
+		session.StatusInterrupted: lipgloss.NewStyle().Background(lipgloss.Color("11")).Foreground(lipgloss.Color("0")).Bold(true), // Yellow bg
 	}
 )
 
@@ -37,7 +38,7 @@ var (
 const (
 	colPID     = 7
 	colProject = 16
-	colStatus  = 10
+	colStatus  = 12
 	colAction  = 36
 	colDur     = 10
 )
@@ -45,7 +46,7 @@ const (
 const (
 	colPIDCompact     = 7
 	colProjectCompact = 12
-	colStatusCompact  = 10
+	colStatusCompact  = 12
 	colTaskCompact    = 0
 	colActionCompact  = 32
 	colDurCompact     = 10
@@ -210,6 +211,8 @@ func actionForStatus(s session.State) string {
 		return s.CurrentAction
 	case session.StatusDone:
 		return "Completed"
+	case session.StatusInterrupted:
+		return "Interrupted by user"
 	default:
 		return ""
 	}
@@ -221,11 +224,13 @@ func statusPriority(s session.Status) int {
 		return 0
 	case session.StatusError:
 		return 1
-	case session.StatusIdle:
+	case session.StatusInterrupted:
 		return 2
-	case session.StatusDone:
+	case session.StatusIdle:
 		return 3
-	default:
+	case session.StatusDone:
 		return 4
+	default:
+		return 5
 	}
 }

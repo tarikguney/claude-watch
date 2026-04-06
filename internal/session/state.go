@@ -17,10 +17,11 @@ import (
 type Status string
 
 const (
-	StatusResponding Status = "Responding"
-	StatusIdle       Status = "Idle"
-	StatusDone       Status = "Done"
-	StatusError      Status = "Error"
+	StatusResponding  Status = "Responding"
+	StatusIdle        Status = "Idle"
+	StatusDone        Status = "Done"
+	StatusError       Status = "Error"
+	StatusInterrupted Status = "Interrupted"
 )
 
 // State holds the derived state for a single Claude Code session.
@@ -48,6 +49,7 @@ type State struct {
 	LastAssistantIsWorking   bool // true if last assistant record had tool_use or thinking (no text-only)
 	LastIsSystemInjectedUser bool
 	LastHasToolResult        bool
+	LastIsInterrupt          bool
 }
 
 // idleThreshold is the duration after which a session with no result is considered Idle.
@@ -89,6 +91,9 @@ func DeriveStatus(rec parser.Record, lastToolResultIsError bool, now time.Time, 
 		return StatusIdle
 
 	case "user":
+		if rec.IsInterruptRecord() {
+			return StatusInterrupted
+		}
 		if rec.IsSystemInjectedUser() {
 			// Tool result with a running process — Claude is processing the output
 			if processRunning && rec.HasToolResult() {
@@ -214,8 +219,11 @@ func ExtractOriginalTask(records []parser.Record) string {
 		for _, b := range blocks {
 			if b.Type == "text" && b.Text != "" {
 				trimmed := strings.TrimSpace(b.Text)
-				// Skip system-injected content (XML tags, command wrappers)
+				// Skip system-injected content (XML tags, command wrappers, interrupts)
 				if strings.HasPrefix(trimmed, "<") {
+					continue
+				}
+				if strings.HasPrefix(trimmed, "[Request interrupted by user") {
 					continue
 				}
 				return truncate(trimmed, 50)
@@ -271,6 +279,9 @@ func ExtractLastPrompt(records []parser.Record) string {
 			if b.Type == "text" && b.Text != "" {
 				trimmed := strings.TrimSpace(b.Text)
 				if strings.HasPrefix(trimmed, "<") {
+					continue
+				}
+				if strings.HasPrefix(trimmed, "[Request interrupted by user") {
 					continue
 				}
 				return truncate(trimmed, 60)
