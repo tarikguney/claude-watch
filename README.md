@@ -4,7 +4,7 @@ A zero-setup CLI dashboard for monitoring Claude Code agents in real time.
 
 Run `claude-watch` and instantly see what all your running Claude Code sessions are doing -- which project, current action, and how long they've been running. Designed to live in a tmux pane as your agent task manager.
 
-![claude-watch screenshot](assets/screenshot.png)
+![claude-watch screenshot](assets/dashboard.png)
 
 ## How it works
 
