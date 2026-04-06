@@ -119,14 +119,17 @@ func Render(sessions []session.State, compact bool, hiddenCount int) string {
 		}) + "\n")
 		b.WriteString(hline("─", tw) + "\n")
 
-		for _, s := range sessions {
+		for i, s := range sessions {
 			b.WriteString(renderRow(s, now) + "\n")
 			prompt := s.LastPrompt
 			if prompt == "" {
 				prompt = s.OriginalTask
 			}
 			if prompt != "" {
-				b.WriteString(promptStyle.Render("  » "+prompt) + "\n")
+				b.WriteString(durationStyle.Render("  » prompt: ") + promptStyle.Render(prompt) + "\n")
+			}
+			if i < len(sessions)-1 {
+				b.WriteString(hline("─", tw) + "\n")
 			}
 		}
 	}
