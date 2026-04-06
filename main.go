@@ -54,6 +54,10 @@ Source: https://github.com/tarikguney/claude-watch`,
 }
 
 func run(claudeDir string, refresh time.Duration, compact bool, maxAge time.Duration) error {
+	// Use alternate screen buffer for clean repainting (like htop/less)
+	output.AltScreen()
+	defer output.ExitAltScreen()
+
 	scanner := session.NewScanner(claudeDir)
 
 	if err := scanner.Discover(); err != nil {

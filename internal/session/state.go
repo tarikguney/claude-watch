@@ -32,8 +32,9 @@ type State struct {
 	FilePath    string
 	ProjectName string
 	Cwd         string
-	OriginalTask string
-	LastPrompt  string
+	OriginalTask  string
+	LastPrompt    string
+	LastResponse  string
 	CurrentAction string
 	Status      Status
 	Model       string
@@ -213,6 +214,34 @@ func ExtractOriginalTask(records []parser.Record) string {
 				}
 				return truncate(trimmed, 50)
 			}
+		}
+	}
+	return ""
+}
+
+// ExtractLastResponse finds the last assistant text response (not tool_use).
+func ExtractLastResponse(records []parser.Record) string {
+	for i := len(records) - 1; i >= 0; i-- {
+		if records[i].Type != "assistant" {
+			continue
+		}
+		mc, err := parser.ParseMessageContent(records[i])
+		if err != nil {
+			continue
+		}
+		blocks, err := parser.ParseContentBlocks(mc)
+		if err != nil {
+			continue
+		}
+		// Find the last text block in this assistant message
+		lastText := ""
+		for _, b := range blocks {
+			if b.Type == "text" && b.Text != "" {
+				lastText = b.Text
+			}
+		}
+		if lastText != "" {
+			return truncate(strings.TrimSpace(lastText), 70)
 		}
 	}
 	return ""

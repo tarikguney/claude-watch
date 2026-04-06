@@ -144,12 +144,14 @@ func (s *Scanner) LoadSession(path string) error {
 	// Extract cwd from head records
 	cwd := extractCwd(headRecords)
 	lastPrompt := ExtractLastPrompt(tailRecords)
+	lastResponse := ExtractLastResponse(tailRecords)
 
 	s.mu.Lock()
 	state.ProjectName = projectName
 	state.Cwd = cwd
 	state.OriginalTask = originalTask
 	state.LastPrompt = lastPrompt
+	state.LastResponse = lastResponse
 	state.CurrentAction = action
 	state.Status = status
 	state.Model = model
@@ -206,6 +208,7 @@ func (s *Scanner) UpdateSession(path string) error {
 
 	model := ExtractModel(newRecords)
 	lastPrompt := ExtractLastPrompt(newRecords)
+	lastResponse := ExtractLastResponse(newRecords)
 	isError := CheckLastToolResultError(newRecords)
 	lastHasToolUse := lastRecordHasToolUse(lastRec)
 	status := DeriveStatus(lastRec, isError, now, state.PID > 0)
@@ -228,6 +231,9 @@ func (s *Scanner) UpdateSession(path string) error {
 	}
 	if lastPrompt != "" {
 		state.LastPrompt = lastPrompt
+	}
+	if lastResponse != "" {
+		state.LastResponse = lastResponse
 	}
 	if lastRec.SessionID != "" {
 		state.SessionID = lastRec.SessionID

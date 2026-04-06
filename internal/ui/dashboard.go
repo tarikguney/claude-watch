@@ -20,6 +20,7 @@ var (
 	separatorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 	projectStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#E0A458"))            // Warm amber
 	promptStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("#7DC4A3"))             // Soft mint/teal
+	responseStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("#A0A0D0"))             // Soft lavender
 	actionStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("15"))
 	durationStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 	pidStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
@@ -127,6 +128,9 @@ func Render(sessions []session.State, compact bool, hiddenCount int) string {
 			}
 			if prompt != "" {
 				b.WriteString(durationStyle.Render("  » prompt: ") + promptStyle.Render(prompt) + "\n")
+			}
+			if s.LastResponse != "" {
+				b.WriteString(durationStyle.Render("  » response: ") + responseStyle.Render(s.LastResponse) + "\n")
 			}
 			if i < len(sessions)-1 {
 				b.WriteString(hline("─", tw) + "\n")
