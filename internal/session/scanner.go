@@ -125,6 +125,7 @@ func (s *Scanner) LoadSession(path string) error {
 
 	isError := CheckLastToolResultError(tailRecords)
 	lastHasToolUse := lastRecordHasToolUse(lastRec)
+	lastIsSystemInjected := lastRec.IsSystemInjectedUser()
 	status := StatusIdle
 	if len(tailRecords) > 0 {
 		status = DeriveStatus(lastRec, isError, now, state.PID > 0)
@@ -160,6 +161,7 @@ func (s *Scanner) LoadSession(path string) error {
 	state.LastRecordTimestamp = lastRec.Timestamp
 	state.LastToolResultError = isError
 	state.LastHasToolUse = lastHasToolUse
+	state.LastIsSystemInjectedUser = lastIsSystemInjected
 	if lastRec.SessionID != "" {
 		state.SessionID = lastRec.SessionID
 	}
@@ -217,6 +219,7 @@ func (s *Scanner) UpdateSession(path string) error {
 	state.LastRecordTimestamp = lastRec.Timestamp
 	state.LastToolResultError = isError
 	state.LastHasToolUse = lastHasToolUse
+	state.LastIsSystemInjectedUser = lastRec.IsSystemInjectedUser()
 	if action != "" {
 		state.CurrentAction = action
 	}
@@ -379,22 +382,8 @@ func (s *Scanner) MatchProcesses(procs []process.Info) {
 		}
 
 		if !ok {
-			// Can't find session file at all — create placeholder
-			key := "process:" + proc.SessionID
-			projectName := filepath.Base(proc.WorkDir)
-			if projectName == "" || projectName == "." {
-				projectName = proc.SessionID[:8]
-			}
-			s.sessions[key] = &State{
-				SessionID:   proc.SessionID,
-				PID:         proc.PID,
-				Cwd:         proc.WorkDir,
-				ProjectName: projectName,
-				Status:      StatusIdle,
-				StartTime:   proc.StartTime,
-				LastUpdate:  time.Now(),
-				FileModTime: time.Now(),
-			}
+			// No session file on disk — likely an agency-spawned subprocess.
+			// Skip it; there's no transcript to display.
 			continue
 		}
 
@@ -440,7 +429,11 @@ func (s *Scanner) MatchProcesses(procs []process.Info) {
 				state.Status = StatusIdle
 			}
 		case "user":
-			state.Status = StatusThinking
+			if state.LastIsSystemInjectedUser {
+				state.Status = StatusIdle
+			} else {
+				state.Status = StatusThinking
+			}
 		}
 	}
 }

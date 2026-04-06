@@ -43,10 +43,11 @@ type State struct {
 	FileModTime time.Time
 
 	// Cached from last record for re-deriving status after PID changes
-	LastRecordType      string
-	LastRecordTimestamp  string
-	LastToolResultError bool
-	LastHasToolUse      bool
+	LastRecordType           string
+	LastRecordTimestamp      string
+	LastToolResultError      bool
+	LastHasToolUse           bool
+	LastIsSystemInjectedUser bool
 }
 
 // idleThreshold is the duration after which a session with no result is considered Idle.
@@ -102,7 +103,12 @@ func DeriveStatus(rec parser.Record, lastToolResultIsError bool, now time.Time, 
 		return StatusIdle
 
 	case "user":
-		// User sent a message — Claude is thinking
+		// System-injected user records (bash output, /clear, local commands)
+		// don't mean Claude is thinking — it's just waiting for real input.
+		if rec.IsSystemInjectedUser() {
+			return StatusIdle
+		}
+		// Real user prompt — Claude is thinking
 		if age < activeThreshold || processRunning {
 			return StatusThinking
 		}

@@ -21,6 +21,37 @@ type Record struct {
 	SessionID string          `json:"sessionId"`
 	Cwd       string          `json:"cwd"`
 	Message   json.RawMessage `json:"message"`
+	IsMeta    bool            `json:"isMeta"`
+}
+
+// IsSystemInjectedUser returns true if this is a user-type record that was
+// injected by the system (bash output, local commands, /clear, etc.) rather
+// than a real user prompt that Claude needs to respond to.
+func (r Record) IsSystemInjectedUser() bool {
+	if r.Type != "user" {
+		return false
+	}
+	if r.IsMeta {
+		return true
+	}
+	// Check if message content is XML-wrapped system content
+	mc, err := ParseMessageContent(r)
+	if err != nil {
+		return false
+	}
+	blocks, err := ParseContentBlocks(mc)
+	if err != nil {
+		return false
+	}
+	for _, b := range blocks {
+		if b.Type == "text" && b.Text != "" {
+			trimmed := strings.TrimSpace(b.Text)
+			if strings.HasPrefix(trimmed, "<") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // MessageContent represents the message field of a record.
