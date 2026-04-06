@@ -32,6 +32,7 @@ type State struct {
 	ProjectName string
 	Cwd         string
 	OriginalTask string
+	LastPrompt  string
 	CurrentAction string
 	Status      Status
 	Model       string
@@ -171,7 +172,8 @@ func ExtractProjectName(encodedPath string) string {
 	return encodedPath
 }
 
-// ExtractOriginalTask finds the first user message text, truncated.
+// ExtractOriginalTask finds the first real user message text, truncated.
+// Skips system-injected messages (XML tags, command wrappers, etc.).
 func ExtractOriginalTask(records []parser.Record) string {
 	for _, rec := range records {
 		if rec.Type != "user" {
@@ -187,7 +189,39 @@ func ExtractOriginalTask(records []parser.Record) string {
 		}
 		for _, b := range blocks {
 			if b.Type == "text" && b.Text != "" {
-				return truncate(b.Text, 50)
+				trimmed := strings.TrimSpace(b.Text)
+				// Skip system-injected content (XML tags, command wrappers)
+				if strings.HasPrefix(trimmed, "<") {
+					continue
+				}
+				return truncate(trimmed, 50)
+			}
+		}
+	}
+	return ""
+}
+
+// ExtractLastPrompt finds the last real user message, returning the first few words.
+func ExtractLastPrompt(records []parser.Record) string {
+	for i := len(records) - 1; i >= 0; i-- {
+		if records[i].Type != "user" {
+			continue
+		}
+		mc, err := parser.ParseMessageContent(records[i])
+		if err != nil {
+			continue
+		}
+		blocks, err := parser.ParseContentBlocks(mc)
+		if err != nil {
+			continue
+		}
+		for _, b := range blocks {
+			if b.Type == "text" && b.Text != "" {
+				trimmed := strings.TrimSpace(b.Text)
+				if strings.HasPrefix(trimmed, "<") {
+					continue
+				}
+				return truncate(trimmed, 60)
 			}
 		}
 	}
