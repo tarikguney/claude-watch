@@ -119,6 +119,24 @@ backend     Idle     Refactor database layer     Last: Wrote db/schema.ts      1
 cli-tool    Done     Add --verbose flag          Completed                     08m
 ```
 
+## Color Scheme
+
+Using `lipgloss` (Charmbracelet) for terminal styling. No animations or spinners -- just static colors that update in place.
+
+| Element | Color | Rationale |
+|---|---|---|
+| **Active** status | Green | Clearly working, positive |
+| **Responding** status | Cyan | Distinct from Active, still progressing |
+| **Thinking** status | Yellow | Processing, not yet producing output |
+| **Idle** status | Dim gray | Faded, not doing anything |
+| **Done** status | Blue | Calm, completed |
+| **Error** status | Red | Universal error color |
+| Header / title | Bold white | Clean emphasis |
+| Project name | Bold | Stand out as the row identifier |
+| Current action | Normal white | Main content, no distraction |
+| Duration | Dim | Secondary info, doesn't compete |
+| Separator line | Dim gray | Structural, stays out of the way |
+
 ## Usage
 
 ```bash
