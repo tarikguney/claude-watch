@@ -4,24 +4,11 @@ A zero-setup CLI dashboard for monitoring Claude Code agents in real time.
 
 Run `claude-watch` and instantly see what all your running Claude Code sessions are doing -- which project, current action, and how long they've been running. Designed to live in a tmux pane as your agent task manager.
 
+![claude-watch screenshot](assets/screenshot.png)
+
 ## How it works
 
-claude-watch discovers running Claude processes from the OS process list, matches each to its most recent session transcript in `~/.claude/projects/`, and renders a continuously-updating dashboard:
-
-```
-CLAUDE WATCH — monitoring your Claude Code sessions  04/06 14:23:45
-──────────────────────────────────────────────────────────────────────────────────────
-PID     │ PROJECT          │ STATUS     │ CURRENT ACTION                  │ DURATION
-──────────────────────────────────────────────────────────────────────────────────────
-13240   │ myapp            │ Tool Use   │ Editing middleware.ts           │ 12m
-  » prompt: Add auth to API endpoints
-──────────────────────────────────────────────────────────────────────────────────────
-23208   │ webapp           │ Thinking   │                                │ 5m
-  » prompt: Fix login page CSS
-──────────────────────────────────────────────────────────────────────────────────────
-33416   │ backend          │ Idle       │                                │ 18m
-  » prompt: Refactor database layer
-```
+claude-watch discovers running Claude processes from the OS process list, matches each to its most recent session transcript in `~/.claude/projects/`, and renders a continuously-updating dashboard.
 
 No hooks to configure, no agents to register, no setup. It discovers running Claude processes and reads what's already on disk.
 
