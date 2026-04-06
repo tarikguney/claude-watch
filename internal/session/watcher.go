@@ -1,0 +1,122 @@
+// Copyright 2026 Tarik Guney
+// Licensed under the MIT License.
+// https://github.com/tarikguney/claude-watch
+
+package session
+
+import (
+	"log"
+	"os"
+	"strings"
+
+	"github.com/fsnotify/fsnotify"
+)
+
+// Watcher monitors the Claude projects directory for file changes using fsnotify.
+type Watcher struct {
+	scanner  *Scanner
+	watcher  *fsnotify.Watcher
+	done     chan struct{}
+}
+
+// NewWatcher creates a new file watcher attached to the given scanner.
+func NewWatcher(scanner *Scanner) (*Watcher, error) {
+	fw, err := fsnotify.NewWatcher()
+	if err != nil {
+		return nil, err
+	}
+
+	return &Watcher{
+		scanner: scanner,
+		watcher: fw,
+		done:    make(chan struct{}),
+	}, nil
+}
+
+// Start begins watching for file system events. It adds watches on all discovered
+// session directories and processes events in a goroutine.
+func (w *Watcher) Start() error {
+	projectsDir := w.scanner.SessionsDir()
+	if _, err := os.Stat(projectsDir); os.IsNotExist(err) {
+		return nil
+	}
+
+	if err := w.addWatchesRecursive(projectsDir); err != nil {
+		log.Printf("warning: could not add watches: %v", err)
+	}
+
+	go w.eventLoop()
+	return nil
+}
+
+// Stop shuts down the watcher.
+func (w *Watcher) Stop() {
+	close(w.done)
+	w.watcher.Close()
+}
+
+func (w *Watcher) eventLoop() {
+	for {
+		select {
+		case <-w.done:
+			return
+		case event, ok := <-w.watcher.Events:
+			if !ok {
+				return
+			}
+			w.handleEvent(event)
+		case err, ok := <-w.watcher.Errors:
+			if !ok {
+				return
+			}
+			log.Printf("watcher error: %v", err)
+		}
+	}
+}
+
+func (w *Watcher) handleEvent(event fsnotify.Event) {
+	path := event.Name
+
+	if event.Has(fsnotify.Create) {
+		info, err := os.Stat(path)
+		if err != nil {
+			return
+		}
+		if info.IsDir() {
+			w.watcher.Add(path)
+			return
+		}
+	}
+
+	if !strings.HasSuffix(path, ".jsonl") {
+		return
+	}
+
+	if event.Has(fsnotify.Write) || event.Has(fsnotify.Create) {
+		if err := w.scanner.UpdateSession(path); err != nil {
+			log.Printf("error updating session %s: %v", path, err)
+		}
+	}
+}
+
+func (w *Watcher) addWatchesRecursive(dir string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+
+	if err := w.watcher.Add(dir); err != nil {
+		return err
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			subdir := dir + "/" + entry.Name()
+			if err := w.addWatchesRecursive(subdir); err != nil {
+				log.Printf("warning: could not watch %s: %v", subdir, err)
+			}
+		}
+	}
+
+	return nil
+}
