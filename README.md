@@ -53,6 +53,18 @@ claude-watch --compact
 | **Done** | Session completed |
 | **Error** | Last tool call returned an error |
 
+## Troubleshooting
+
+### `zsh: command not found: claude-watch`
+
+`go install` places binaries in `$HOME/go/bin`, but this directory is not added to your `PATH` by default. As a result, your shell cannot find the `claude-watch` executable. Fix it by adding it to your shell config:
+
+```bash
+echo 'export PATH="$PATH:$HOME/go/bin"' >> ~/.zshrc && source ~/.zshrc
+```
+
+Then run `claude-watch` again.
+
 ## License
 
 MIT
