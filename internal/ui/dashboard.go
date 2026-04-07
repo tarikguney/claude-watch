@@ -61,7 +61,7 @@ func computeCols(sessions []session.State, now time.Time) cols {
 	c := cols{
 		pid:     len("PID") + 2,
 		project: len("PROJECT") + 2,
-		status:  len("STATUS") + 2,
+		status:  len("Interrupted") + 2, // fixed width — widest possible status
 		action:  len("CURRENT ACTION") + 2,
 		dur:     len("DURATION") + 2,
 	}
@@ -70,9 +70,6 @@ func computeCols(sessions []session.State, now time.Time) cols {
 	for _, s := range sessions {
 		if w := len(s.ProjectName) + 2; w > c.project {
 			c.project = w
-		}
-		if w := len(string(s.Status)) + 2; w > c.status {
-			c.status = w
 		}
 		action := actionForStatus(s)
 		if w := len(action) + 2; w > c.action {

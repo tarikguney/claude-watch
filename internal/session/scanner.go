@@ -433,6 +433,9 @@ func (s *Scanner) MatchProcesses(procs []process.Info) {
 			// Remove any placeholder for this process since we found a real session
 			delete(s.sessions, "placeholder:"+proc.SessionID)
 			s.sessions[bestPath].PID = proc.PID
+			if s.sessions[bestPath].StartTime.IsZero() && !proc.StartTime.IsZero() {
+				s.sessions[bestPath].StartTime = proc.StartTime
+			}
 			if s.sessions[bestPath].Cwd == "" && proc.WorkDir != "" {
 				s.sessions[bestPath].Cwd = proc.WorkDir
 			}
@@ -466,11 +469,10 @@ func (s *Scanner) MatchProcesses(procs []process.Info) {
 			if state.LastIsInterrupt {
 				state.Status = StatusInterrupted
 			} else if state.LastIsSystemInjectedUser {
-				if state.LastHasToolResult {
-					state.Status = StatusResponding
-				} else {
-					state.Status = StatusIdle
-				}
+				// System-injected records (tool results, system reminders) with a
+				// running process should show Responding — reminders get written
+				// during long tool calls and don't mean Claude is idle.
+				state.Status = StatusResponding
 			} else {
 				state.Status = StatusResponding
 			}

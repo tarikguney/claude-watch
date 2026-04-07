@@ -96,8 +96,17 @@ func DeriveStatus(rec parser.Record, lastToolResultIsError bool, now time.Time, 
 			return StatusInterrupted
 		}
 		if rec.IsSystemInjectedUser() {
-			// Tool result with a running process — Claude is processing the output
-			if processRunning && rec.HasToolResult() {
+			if rec.HasToolResult() {
+				// Tool result — Claude is processing the output
+				if processRunning {
+					return StatusResponding
+				}
+				return StatusIdle
+			}
+			// System-injected without tool_result (e.g., <system-reminder>).
+			// These get written during long tool calls or thinking and don't
+			// represent a state change — keep Responding if the process is alive.
+			if processRunning {
 				return StatusResponding
 			}
 			return StatusIdle
