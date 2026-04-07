@@ -227,10 +227,14 @@ func run(claudeDir string, refresh time.Duration, compact bool, maxAge time.Dura
 				case keyUp:
 					if cursorIdx > 0 {
 						cursorIdx--
+					} else if scrollOffset > 0 {
+						scrollOffset--
 					}
 				case keyDown:
 					if cursorIdx < count-1 {
 						cursorIdx++
+					} else {
+						scrollOffset++ // scroll past last session to see footer
 					}
 				case keyToggle:
 					if cursorIdx < count {
@@ -312,7 +316,8 @@ func renderWithScroll(sessions []session.State, opts ui.RenderOpts, scrollOffset
 	contentLines := lines[headerLines:]
 	maxVisible := termH - headerLines - 1
 
-	// Auto-scroll to keep cursor visible
+	// Auto-scroll to keep cursor visible (only pulls viewport toward cursor,
+	// never fights a manual scroll that already shows the cursor)
 	if cursorPID > 0 {
 		pidStr := fmt.Sprintf("%d", cursorPID)
 		for i, line := range contentLines {
