@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/charmbracelet/x/term"
@@ -150,10 +151,13 @@ func run(claudeDir string, refresh time.Duration, compact bool, maxAge time.Dura
 
 	scanner := session.NewScanner(claudeDir)
 
+	stopLoading := showLoading("Discovering sessions...")
 	if err := scanner.Discover(); err != nil {
+		stopLoading()
 		return fmt.Errorf("discovery failed: %w", err)
 	}
 	scanner.LoadAll()
+	stopLoading()
 
 	watcher, err := session.NewWatcher(scanner)
 	if err != nil {
@@ -178,7 +182,9 @@ func run(claudeDir string, refresh time.Duration, compact bool, maxAge time.Dura
 
 	// Background process discovery — keeps session PIDs up to date
 	// without blocking the UI loop (PowerShell queries are slow on Windows).
+	stopLoading = showLoading("Checking running processes...")
 	refreshProcesses(scanner)
+	stopLoading()
 	go func() {
 		procTicker := time.NewTicker(2 * time.Second)
 		defer procTicker.Stop()
@@ -283,6 +289,32 @@ func refreshProcesses(scanner *session.Scanner) {
 	scanner.MatchProcesses(procs)
 	// Load any newly discovered sessions from process matching
 	scanner.LoadAll()
+}
+
+// showLoading displays an animated spinner with a message on the alternate
+// screen buffer. It returns a stop function that halts the animation.
+func showLoading(msg string) func() {
+	frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+	style := termenv.Style{}.Foreground(output.Color("#D4A0FF"))
+	var once sync.Once
+	done := make(chan struct{})
+	go func() {
+		i := 0
+		for {
+			select {
+			case <-done:
+				return
+			default:
+				frame := style.Styled(frames[i%len(frames)])
+				fmt.Fprintf(os.Stdout, "\x1b[H\x1b[2K  %s %s", frame, msg)
+				i++
+				time.Sleep(80 * time.Millisecond)
+			}
+		}
+	}()
+	return func() {
+		once.Do(func() { close(done) })
+	}
 }
 
 var output = termenv.NewOutput(os.Stdout)
