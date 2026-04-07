@@ -33,6 +33,7 @@ var (
 		session.StatusDone:        lipgloss.NewStyle().Background(lipgloss.Color("12")).Foreground(lipgloss.Color("15")).Bold(true), // Blue bg
 		session.StatusError:       lipgloss.NewStyle().Background(lipgloss.Color("9")).Foreground(lipgloss.Color("15")).Bold(true),  // Red bg
 		session.StatusInterrupted: lipgloss.NewStyle().Background(lipgloss.Color("11")).Foreground(lipgloss.Color("0")).Bold(true),  // Yellow bg
+		session.StatusWaiting:    lipgloss.NewStyle().Background(lipgloss.Color("13")).Foreground(lipgloss.Color("0")).Bold(true),  // Magenta bg
 	}
 )
 
@@ -236,6 +237,8 @@ func actionForStatus(s session.State) string {
 		return "Completed"
 	case session.StatusInterrupted:
 		return "Interrupted by user"
+	case session.StatusWaiting:
+		return "Waiting for first prompt..."
 	default:
 		return ""
 	}
@@ -251,9 +254,11 @@ func statusPriority(s session.Status) int {
 		return 2
 	case session.StatusIdle:
 		return 3
-	case session.StatusDone:
+	case session.StatusWaiting:
 		return 4
-	default:
+	case session.StatusDone:
 		return 5
+	default:
+		return 6
 	}
 }

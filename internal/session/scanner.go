@@ -352,9 +352,13 @@ func (s *Scanner) MatchProcesses(procs []process.Info) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Clear all PIDs first (process may have exited)
-	for _, state := range s.sessions {
+	// Clear all PIDs first (process may have exited).
+	// Also remove placeholders — they'll be re-created below if still needed.
+	for key, state := range s.sessions {
 		state.PID = 0
+		if strings.HasPrefix(key, "placeholder:") {
+			delete(s.sessions, key)
+		}
 	}
 
 	// Build lookup: filename (without .jsonl) → file path
@@ -394,8 +398,24 @@ func (s *Scanner) MatchProcesses(procs []process.Info) {
 		}
 
 		if !ok {
-			// No session file on disk — likely an agency-spawned subprocess.
-			// Skip it; there's no transcript to display.
+			// No session file on disk — process is running but hasn't written
+			// a transcript yet (e.g., still initializing or waiting for first prompt).
+			// Only create a placeholder if the process has a work directory,
+			// otherwise it's likely a background/daemon process with nothing to show.
+			if proc.WorkDir == "" {
+				continue
+			}
+			placeholderKey := "placeholder:" + proc.SessionID
+			s.sessions[placeholderKey] = &State{
+				SessionID:   proc.SessionID,
+				PID:         proc.PID,
+				Cwd:         proc.WorkDir,
+				ProjectName: filepath.Base(proc.WorkDir),
+				Status:      StatusWaiting,
+				StartTime:   proc.StartTime,
+				LastUpdate:  time.Now(),
+				FileModTime: time.Now(),
+			}
 			continue
 		}
 
@@ -410,6 +430,8 @@ func (s *Scanner) MatchProcesses(procs []process.Info) {
 			}
 		}
 		if bestPath != "" {
+			// Remove any placeholder for this process since we found a real session
+			delete(s.sessions, "placeholder:"+proc.SessionID)
 			s.sessions[bestPath].PID = proc.PID
 			if s.sessions[bestPath].Cwd == "" && proc.WorkDir != "" {
 				s.sessions[bestPath].Cwd = proc.WorkDir

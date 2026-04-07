@@ -22,6 +22,7 @@ const (
 	StatusDone        Status = "Done"
 	StatusError       Status = "Error"
 	StatusInterrupted Status = "Interrupted"
+	StatusWaiting     Status = "Waiting"
 )
 
 // State holds the derived state for a single Claude Code session.
