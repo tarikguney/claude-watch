@@ -26,6 +26,9 @@ var (
 	actionStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("15"))
 	durationStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 	pidStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	cursorStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#D4A0FF"))  // Bright arrow indicator
+	helpKeyStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#6CB6FF")) // Soft blue for keys
+	helpTextStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))                // Gray for descriptions
 
 	statusStyles = map[session.Status]lipgloss.Style{
 		session.StatusResponding:  lipgloss.NewStyle().Background(lipgloss.Color("10")).Foreground(lipgloss.Color("0")).Bold(true),  // Green bg
@@ -36,6 +39,13 @@ var (
 		session.StatusWaiting:    lipgloss.NewStyle().Background(lipgloss.Color("13")).Foreground(lipgloss.Color("0")).Bold(true),  // Magenta bg
 	}
 )
+
+// RenderOpts controls per-render display options.
+type RenderOpts struct {
+	Compact   bool
+	CursorPID int          // PID of selected session (0 = no cursor)
+	Expanded  map[int]bool // keyed by PID; true = expanded (default is collapsed)
+}
 
 // cols holds computed column widths for a render pass.
 type cols struct {
@@ -130,7 +140,7 @@ func hline(char string, width int) string {
 
 // Render produces the full dashboard string for the given sessions.
 // hiddenCount is the number of older sessions not shown due to max-age filtering.
-func Render(sessions []session.State, compact bool, hiddenCount int) string {
+func Render(sessions []session.State, opts RenderOpts, hiddenCount int) string {
 	now := time.Now()
 	var b strings.Builder
 
@@ -162,8 +172,12 @@ func Render(sessions []session.State, compact bool, hiddenCount int) string {
 	b.WriteString(hline("─", tw) + "\n")
 
 	for i, s := range sessions {
-		b.WriteString(renderRow(s, now, c) + "\n")
-		if !compact {
+		isCursor := opts.CursorPID != 0 && s.PID == opts.CursorPID
+		isExpanded := opts.Expanded[s.PID]
+
+		b.WriteString(renderRow(s, now, c, isCursor) + "\n")
+
+		if !opts.Compact && isExpanded {
 			prompt := s.LastPrompt
 			if prompt == "" {
 				prompt = s.OriginalTask
@@ -174,9 +188,9 @@ func Render(sessions []session.State, compact bool, hiddenCount int) string {
 			if s.LastResponse != "" {
 				b.WriteString(durationStyle.Render("  » response: ") + responseStyle.Render(s.LastResponse) + "\n")
 			}
-			if i < len(sessions)-1 {
-				b.WriteString(hline("─", tw) + "\n")
-			}
+		}
+		if i < len(sessions)-1 {
+			b.WriteString(hline("─", tw) + "\n")
 		}
 	}
 
@@ -184,10 +198,22 @@ func Render(sessions []session.State, compact bool, hiddenCount int) string {
 		b.WriteString(durationStyle.Render("  No active sessions found. Watching for new sessions...") + "\n")
 	}
 
+	// Help bar
+	if !opts.Compact {
+		b.WriteString("\n" + hline("─", tw) + "\n")
+		b.WriteString(
+			helpKeyStyle.Render("↑↓") + helpTextStyle.Render(" Navigate  ") +
+				helpKeyStyle.Render("Enter") + helpTextStyle.Render(" Toggle  ") +
+				helpKeyStyle.Render("e") + helpTextStyle.Render(" Expand All  ") +
+				helpKeyStyle.Render("c") + helpTextStyle.Render(" Collapse All  ") +
+				helpKeyStyle.Render("q") + helpTextStyle.Render(" Quit"),
+		)
+	}
+
 	return b.String()
 }
 
-func renderRow(s session.State, now time.Time, c cols) string {
+func renderRow(s session.State, now time.Time, c cols, isCursor bool) string {
 	dur := ""
 	if !s.StartTime.IsZero() {
 		dur = session.FormatDuration(now.Sub(s.StartTime))
@@ -200,8 +226,15 @@ func renderRow(s session.State, now time.Time, c cols) string {
 		pidStr = fmt.Sprintf("%d", s.PID)
 	}
 
+	// Embed cursor indicator inside the PID cell
+	if isCursor {
+		pidStr = cursorStyle.Render(">") + " " + pidStyle.Render(pad(pidStr, c.pid-2))
+	} else {
+		pidStr = pidStyle.Render(pad(pidStr, c.pid))
+	}
+
 	return joinCols([]string{
-		pidStyle.Render(pad(pidStr, c.pid)),
+		pidStr,
 		projectStyle.Render(pad(s.ProjectName, c.project)),
 		styledStatus(s.Status, c.status),
 		actionStyle.Render(pad(action, c.action)),

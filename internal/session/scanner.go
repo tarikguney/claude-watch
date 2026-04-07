@@ -217,6 +217,14 @@ func (s *Scanner) UpdateSession(path string) error {
 	lastAssistantWorking := isAssistantWorking(lastRec)
 	status := DeriveStatus(lastRec, isError, now, state.PID > 0)
 
+	newCwd := ""
+	for _, rec := range newRecords {
+		if rec.Cwd != "" {
+			newCwd = rec.Cwd
+			break
+		}
+	}
+
 	s.mu.Lock()
 	state.FileOffset = newOffset
 	state.LastUpdate = now
@@ -243,6 +251,10 @@ func (s *Scanner) UpdateSession(path string) error {
 	}
 	if lastRec.SessionID != "" {
 		state.SessionID = lastRec.SessionID
+	}
+	if state.Cwd == "" && newCwd != "" {
+		state.Cwd = newCwd
+		state.ProjectName = filepath.Base(newCwd)
 	}
 	s.mu.Unlock()
 
