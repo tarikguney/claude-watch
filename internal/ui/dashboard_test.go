@@ -13,7 +13,7 @@ import (
 )
 
 func TestRender_EmptySessions(t *testing.T) {
-	output := Render(nil, false, 0)
+	output := Render(nil, RenderOpts{}, 0)
 	if !strings.Contains(output, "CLAUDE WATCH") {
 		t.Error("expected header 'CLAUDE WATCH'")
 	}
@@ -51,7 +51,7 @@ func TestRender_WithSessions(t *testing.T) {
 		},
 	}
 
-	output := Render(sessions, false, 0)
+	output := Render(sessions, RenderOpts{}, 0)
 
 	if !strings.Contains(output, "CLAUDE WATCH") {
 		t.Error("expected header")
@@ -86,7 +86,7 @@ func TestRender_Compact(t *testing.T) {
 		},
 	}
 
-	output := Render(sessions, true, 0)
+	output := Render(sessions, RenderOpts{Compact: true}, 0)
 	if !strings.Contains(output, "CLAUDE WATCH") {
 		t.Error("expected header in compact mode")
 	}
@@ -125,7 +125,7 @@ func TestRender_SortOrder(t *testing.T) {
 		},
 	}
 
-	output := Render(sessions, false, 0)
+	output := Render(sessions, RenderOpts{}, 0)
 
 	lowIdx := strings.Index(output, "low-pid")
 	midIdx := strings.Index(output, "mid-pid")
