@@ -31,6 +31,7 @@ type processBasicInformation struct {
 
 // GetProcessCwd reads the current working directory of a process on Windows
 // by inspecting the Process Environment Block (PEB) via NtQueryInformationProcess.
+// Note: PEB offsets are for x64 only (ProcessParameters at 0x20, CurrentDirectory at 0x38).
 func GetProcessCwd(pid int) (string, error) {
 	handle, err := syscall.OpenProcess(processQueryInformation|processVMRead, false, uint32(pid))
 	if err != nil {

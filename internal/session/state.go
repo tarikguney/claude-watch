@@ -204,22 +204,6 @@ func EncodeProjectDir(path string) string {
 	return r.Replace(path)
 }
 
-// ExtractProjectName decodes a project name from the URL-encoded directory path.
-// e.g., "-Users-tarik-myapp" -> "myapp"
-func ExtractProjectName(encodedPath string) string {
-	parts := strings.Split(encodedPath, "-")
-	if len(parts) == 0 {
-		return encodedPath
-	}
-	// Return the last non-empty segment
-	for i := len(parts) - 1; i >= 0; i-- {
-		if parts[i] != "" {
-			return parts[i]
-		}
-	}
-	return encodedPath
-}
-
 // ExtractOriginalTask finds the first real user message text, truncated.
 // Skips system-injected messages (XML tags, command wrappers, etc.).
 func ExtractOriginalTask(records []parser.Record) string {

@@ -192,27 +192,6 @@ func TestEncodeProjectDir(t *testing.T) {
 	}
 }
 
-func TestExtractProjectName(t *testing.T) {
-	tests := []struct {
-		input    string
-		expected string
-	}{
-		{"-Users-tarik-myapp", "myapp"},
-		{"-Users-tarik-Desktop-projects-webapp", "webapp"},
-		{"simple", "simple"},
-		{"-Users-tarik-", "tarik"},
-		{"", ""},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
-			result := ExtractProjectName(tt.input)
-			if result != tt.expected {
-				t.Errorf("expected %q, got %q", tt.expected, result)
-			}
-		})
-	}
-}
 
 func TestExtractOriginalTask(t *testing.T) {
 	records := []parser.Record{

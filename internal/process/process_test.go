@@ -72,6 +72,37 @@ func TestParseUnixLine(t *testing.T) {
 	}
 }
 
+func TestParsePipedLines(t *testing.T) {
+	input := `33416|2026-04-06T10:53:38.3082190-06:00|"C:\Users\user\.claude-cli\2.1.92\claude.exe" --session-id 2c8d67fc-e59a-4a9e-af4d-2878b83ffe84 --add-dir Q:/sources/project
+23208|2026-04-06T10:55:03.8656050-06:00|"C:\Users\user\.claude-cli\2.1.92\claude.exe" --session-id ee8e923a-24b3-46d5-a97e-153ca47848cd --add-dir Q:/sources/other
+`
+
+	results, err := parsePipedLines(input)
+	if err != nil {
+		t.Fatalf("parsePipedLines error: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+
+	if results[0].PID != 33416 {
+		t.Errorf("PID: got %d, want 33416", results[0].PID)
+	}
+	if results[0].SessionID != "2c8d67fc-e59a-4a9e-af4d-2878b83ffe84" {
+		t.Errorf("SessionID: got %q", results[0].SessionID)
+	}
+	if results[0].StartTime.IsZero() {
+		t.Error("expected non-zero StartTime")
+	}
+
+	if results[1].PID != 23208 {
+		t.Errorf("PID: got %d, want 23208", results[1].PID)
+	}
+	if results[1].SessionID != "ee8e923a-24b3-46d5-a97e-153ca47848cd" {
+		t.Errorf("SessionID: got %q", results[1].SessionID)
+	}
+}
+
 func TestExtractFlag(t *testing.T) {
 	tests := []struct {
 		name string

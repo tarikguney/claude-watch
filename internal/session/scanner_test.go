@@ -73,9 +73,7 @@ func TestScanner_LoadSession(t *testing.T) {
 	}
 
 	s := sessions[0]
-	if s.ProjectName != "myapp" {
-		t.Errorf("expected project name 'myapp', got %q", s.ProjectName)
-	}
+	// ProjectName is set by MatchProcesses from OS CWD, not by LoadSession
 	if s.OriginalTask != "Add auth to API endpoints" {
 		t.Errorf("expected original task 'Add auth to API endpoints', got %q", s.OriginalTask)
 	}
@@ -146,30 +144,12 @@ func TestScanner_MultipleProjects(t *testing.T) {
 		t.Fatalf("expected 2 sessions, got %d", len(sessions))
 	}
 
-	names := map[string]bool{}
+	// ProjectName is set by MatchProcesses from OS CWD, not by LoadSession.
+	// Verify sessions were loaded by checking they have non-zero file offsets.
 	for _, s := range sessions {
-		names[s.ProjectName] = true
-	}
-	if !names["app1"] || !names["app2"] {
-		t.Errorf("expected project names app1 and app2, got %v", names)
+		if s.FileOffset == 0 {
+			t.Errorf("expected non-zero FileOffset for session %s", s.FilePath)
+		}
 	}
 }
 
-func TestExtractProjectFromPath(t *testing.T) {
-	tests := []struct {
-		path     string
-		expected string
-	}{
-		{"/home/user/.claude/projects/-Users-tarik-myapp/abc.jsonl", "myapp"},
-		{"/home/user/.claude/projects/-Users-tarik-Desktop-webapp/xyz.jsonl", "webapp"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.expected, func(t *testing.T) {
-			result := extractProjectFromPath(tt.path)
-			if result != tt.expected {
-				t.Errorf("expected %q, got %q", tt.expected, result)
-			}
-		})
-	}
-}

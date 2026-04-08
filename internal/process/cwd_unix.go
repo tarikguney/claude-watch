@@ -15,21 +15,24 @@ import (
 func GetProcessCwd(pid int) (string, error) {
 	// Linux: /proc/<pid>/cwd symlink
 	link := fmt.Sprintf("/proc/%d/cwd", pid)
-	if target, err := os.Readlink(link); err == nil {
+	target, err := os.Readlink(link)
+	if err == nil {
 		return target, nil
 	}
 
-	// macOS: use lsof
+	// macOS: use lsof as fallback
 	if runtime.GOOS == "darwin" {
-		out, err := exec.Command("lsof", "-a", "-d", "cwd", "-Fn", "-p", fmt.Sprintf("%d", pid)).Output()
-		if err == nil {
+		out, lsofErr := exec.Command("lsof", "-a", "-d", "cwd", "-Fn", "-p", fmt.Sprintf("%d", pid)).Output()
+		if lsofErr == nil {
 			for _, line := range strings.Split(string(out), "\n") {
 				if strings.HasPrefix(line, "n") {
 					return line[1:], nil
 				}
 			}
 		}
+		return "", fmt.Errorf("lsof failed for pid %d: %w", pid, lsofErr)
 	}
 
-	return "", fmt.Errorf("cannot determine CWD for pid %d", pid)
+	// Linux but Readlink failed — return the original error
+	return "", fmt.Errorf("readlink /proc/%d/cwd: %w", pid, err)
 }

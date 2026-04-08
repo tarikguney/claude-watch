@@ -80,18 +80,12 @@ func (s *Scanner) LoadSession(path string) error {
 	}
 	s.mu.Unlock()
 
-	// Read head for original task and project name
+	// Read head for original task
 	headRecords, err := parser.ReadHead(path)
 	if err != nil {
 		return err
 	}
 	originalTask := ExtractOriginalTask(headRecords)
-
-	// Extract project name from cwd in session records, fall back to path
-	projectName := extractProjectFromCwd(headRecords)
-	if projectName == "" {
-		projectName = extractProjectFromPath(path)
-	}
 
 	// Read tail for current state
 	tailRecords, err := parser.ReadTail(path)
@@ -149,7 +143,6 @@ func (s *Scanner) LoadSession(path string) error {
 	lastResponse := ExtractLastResponse(tailRecords)
 
 	s.mu.Lock()
-	state.ProjectName = projectName
 	state.Cwd = cwd
 	state.OriginalTask = originalTask
 	state.LastPrompt = lastPrompt
@@ -254,7 +247,6 @@ func (s *Scanner) UpdateSession(path string) error {
 	}
 	if state.Cwd == "" && newCwd != "" {
 		state.Cwd = newCwd
-		state.ProjectName = filepath.Base(newCwd)
 	}
 	s.mu.Unlock()
 
@@ -435,21 +427,7 @@ func (s *Scanner) MatchProcesses(procs []process.Info) {
 		}
 
 		if projectDir == "" {
-			// No project directory found — create placeholder if we have a CWD
-			if proc.Cwd == "" {
-				continue
-			}
-			placeholderKey := "placeholder:" + proc.SessionID
-			s.sessions[placeholderKey] = &State{
-				SessionID:   proc.SessionID,
-				PID:         proc.PID,
-				Cwd:         proc.Cwd,
-				ProjectName: filepath.Base(proc.Cwd),
-				Status:      StatusWaiting,
-				StartTime:   proc.StartTime,
-				LastUpdate:  time.Now(),
-				FileModTime: time.Now(),
-			}
+			s.createWaitingSession(proc)
 			continue
 		}
 
@@ -482,19 +460,8 @@ func (s *Scanner) MatchProcesses(procs []process.Info) {
 				s.sessions[bestPath].Cwd = proc.Cwd
 				s.sessions[bestPath].ProjectName = filepath.Base(proc.Cwd)
 			}
-		} else if proc.Cwd != "" {
-			// No valid session file — create placeholder
-			placeholderKey := "placeholder:" + proc.SessionID
-			s.sessions[placeholderKey] = &State{
-				SessionID:   proc.SessionID,
-				PID:         proc.PID,
-				Cwd:         proc.Cwd,
-				ProjectName: filepath.Base(proc.Cwd),
-				Status:      StatusWaiting,
-				StartTime:   proc.StartTime,
-				LastUpdate:  time.Now(),
-				FileModTime: time.Now(),
-			}
+		} else {
+			s.createWaitingSession(proc)
 		}
 	}
 
@@ -534,6 +501,24 @@ func (s *Scanner) MatchProcesses(procs []process.Info) {
 }
 
 
+// createWaitingSession creates a placeholder session for a process that has no matching
+// session file yet. Requires the caller to hold s.mu.
+func (s *Scanner) createWaitingSession(proc process.Info) {
+	if proc.Cwd == "" {
+		return
+	}
+	s.sessions["placeholder:"+proc.SessionID] = &State{
+		SessionID:   proc.SessionID,
+		PID:         proc.PID,
+		Cwd:         proc.Cwd,
+		ProjectName: filepath.Base(proc.Cwd),
+		Status:      StatusWaiting,
+		StartTime:   proc.StartTime,
+		LastUpdate:  time.Now(),
+		FileModTime: time.Now(),
+	}
+}
+
 // RunningSessions returns only sessions that have a running process (PID > 0).
 func (s *Scanner) RunningSessions() []State {
 	s.mu.RLock()
@@ -557,18 +542,3 @@ func extractCwd(records []parser.Record) string {
 	return ""
 }
 
-func extractProjectFromCwd(records []parser.Record) string {
-	for _, rec := range records {
-		if rec.Cwd != "" {
-			return filepath.Base(rec.Cwd)
-		}
-	}
-	return ""
-}
-
-func extractProjectFromPath(path string) string {
-	// Path: .../.claude/projects/<encoded-project>/<uuid>.jsonl
-	dir := filepath.Dir(path) // .../<encoded-project>
-	encoded := filepath.Base(dir)
-	return ExtractProjectName(encoded)
-}
