@@ -14,12 +14,11 @@ import (
 type Info struct {
 	PID       int
 	SessionID string
-	WorkDir   string // from --add-dir flag
+	Cwd       string // current working directory read from OS
 	StartTime time.Time
 }
 
 var sessionIDRe = regexp.MustCompile(`--session-id\s+([0-9a-f-]{36})`)
-var addDirRe = regexp.MustCompile(`--add-dir\s+(\S+)`)
 
 // ListClaude returns info for all running claude / claude.exe processes.
 func ListClaude() ([]Info, error) {
@@ -106,10 +105,11 @@ func parsePipedLines(output string) ([]Info, error) {
 			continue
 		}
 
+		cwd, _ := GetProcessCwd(pid)
 		results = append(results, Info{
 			PID:       pid,
 			SessionID: sessionID,
-			WorkDir:   extractFlag(addDirRe, cmdLine),
+			Cwd:       cwd,
 			StartTime: startTime,
 		})
 	}
@@ -154,12 +154,12 @@ func parseUnixLine(line string) Info {
 	cmdLine := strings.TrimSpace(rest)
 
 	sessionID := extractFlag(sessionIDRe, cmdLine)
-	workDir := extractFlag(addDirRe, cmdLine)
+	cwd, _ := GetProcessCwd(pid)
 
 	return Info{
 		PID:       pid,
 		SessionID: sessionID,
-		WorkDir:   workDir,
+		Cwd:       cwd,
 		StartTime: startTime,
 	}
 }

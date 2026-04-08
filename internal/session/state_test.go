@@ -170,6 +170,28 @@ func TestFormatToolAction(t *testing.T) {
 	}
 }
 
+func TestEncodeProjectDir(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{`Q:\sources\ci-seal-phase-2`, "Q--sources-ci-seal-phase-2"},
+		{`C:\Users\abguney\tools\claude-watch`, "C--Users-abguney-tools-claude-watch"},
+		{`C:\Users\abguney`, "C--Users-abguney"},
+		{"Q:/sources/cs-master", "Q--sources-cs-master"},
+		{"/home/user/myapp", "-home-user-myapp"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			result := EncodeProjectDir(tt.input)
+			if result != tt.expected {
+				t.Errorf("expected %q, got %q", tt.expected, result)
+			}
+		})
+	}
+}
+
 func TestExtractProjectName(t *testing.T) {
 	tests := []struct {
 		input    string

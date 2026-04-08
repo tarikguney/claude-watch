@@ -356,10 +356,9 @@ func deduplicateByCwd(sessions []State) []State {
 }
 
 // MatchProcesses associates running Claude processes with their session states.
-// Strategy: use the process's --session-id to find which project directory the
-// session lives in (~/.claude/projects/<encoded-project>/<session-id>.jsonl),
-// then pick the most recently modified .jsonl in that same directory.
-// This handles the case where Claude creates new sessions within the same process.
+// Primary strategy: encode the process's OS-level CWD to find the project directory
+// (~/.claude/projects/<encoded-cwd>/), then pick the most recently modified .jsonl.
+// Fallback: use --session-id to locate the session file directly.
 func (s *Scanner) MatchProcesses(procs []process.Info) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -387,42 +386,65 @@ func (s *Scanner) MatchProcesses(procs []process.Info) {
 			continue
 		}
 
-		// Find the original session file to determine the project directory
-		origPath, ok := fileSessionToPath[proc.SessionID]
-		if !ok {
-			// Session file not yet discovered — try to find it on disk
-			targetFile := proc.SessionID + ".jsonl"
-			projectsDir := filepath.Join(s.claudeDir, "projects")
-			filepath.Walk(projectsDir, func(path string, info os.FileInfo, err error) error {
-				if ok || err != nil || info == nil || info.IsDir() {
-					return nil
-				}
-				if filepath.Base(path) == targetFile {
-					origPath = path
-					ok = true
-					// Register it so LoadAll will pick it up
-					if _, exists := s.sessions[path]; !exists {
-						s.sessions[path] = &State{FilePath: path}
+		projectDir := ""
+
+		// Primary: use OS CWD to derive the project directory
+		if proc.Cwd != "" {
+			encoded := EncodeProjectDir(proc.Cwd)
+			candidate := filepath.Join(s.claudeDir, "projects", encoded)
+			if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+				projectDir = candidate
+				// Discover any session files not yet known
+				entries, _ := os.ReadDir(candidate)
+				for _, e := range entries {
+					if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
+						continue
+					}
+					if strings.Contains(e.Name(), "subagents") {
+						continue
+					}
+					fullPath := filepath.Join(candidate, e.Name())
+					if _, exists := s.sessions[fullPath]; !exists {
+						s.sessions[fullPath] = &State{FilePath: fullPath}
 					}
 				}
-				return nil
-			})
+			}
 		}
 
-		if !ok {
-			// No session file on disk — process is running but hasn't written
-			// a transcript yet (e.g., still initializing or waiting for first prompt).
-			// Only create a placeholder if the process has a work directory,
-			// otherwise it's likely a background/daemon process with nothing to show.
-			if proc.WorkDir == "" {
+		// Fallback: use --session-id to find the project directory
+		if projectDir == "" {
+			if origPath, ok := fileSessionToPath[proc.SessionID]; ok {
+				projectDir = filepath.Dir(origPath)
+			} else {
+				// Walk to find the session file on disk
+				targetFile := proc.SessionID + ".jsonl"
+				projectsDir := filepath.Join(s.claudeDir, "projects")
+				filepath.Walk(projectsDir, func(path string, info os.FileInfo, err error) error {
+					if projectDir != "" || err != nil || info == nil || info.IsDir() {
+						return nil
+					}
+					if filepath.Base(path) == targetFile {
+						projectDir = filepath.Dir(path)
+						if _, exists := s.sessions[path]; !exists {
+							s.sessions[path] = &State{FilePath: path}
+						}
+					}
+					return nil
+				})
+			}
+		}
+
+		if projectDir == "" {
+			// No project directory found — create placeholder if we have a CWD
+			if proc.Cwd == "" {
 				continue
 			}
 			placeholderKey := "placeholder:" + proc.SessionID
 			s.sessions[placeholderKey] = &State{
 				SessionID:   proc.SessionID,
 				PID:         proc.PID,
-				Cwd:         proc.WorkDir,
-				ProjectName: filepath.Base(proc.WorkDir),
+				Cwd:         proc.Cwd,
+				ProjectName: filepath.Base(proc.Cwd),
 				Status:      StatusWaiting,
 				StartTime:   proc.StartTime,
 				LastUpdate:  time.Now(),
@@ -431,28 +453,47 @@ func (s *Scanner) MatchProcesses(procs []process.Info) {
 			continue
 		}
 
-		// Found the project directory — now find the most recent session in it
-		projectDir := filepath.Dir(origPath)
+		// Find the most recently modified session in the project directory
 		bestPath := ""
 		var bestMod time.Time
 		for path, state := range s.sessions {
-			if filepath.Dir(path) == projectDir && state.FileModTime.After(bestMod) {
-				bestPath = path
-				bestMod = state.FileModTime
+			if filepath.Dir(path) == projectDir {
+				if state.FileModTime.After(bestMod) || (bestPath == "" && !state.FileModTime.After(bestMod)) {
+					bestPath = path
+					bestMod = state.FileModTime
+				}
 			}
 		}
+		// If the best session file was modified before the process started,
+		// it's from a previous session — use a placeholder instead.
+		if bestPath != "" && !proc.StartTime.IsZero() && !bestMod.IsZero() &&
+			bestMod.Before(proc.StartTime) {
+			bestPath = ""
+		}
+
 		if bestPath != "" {
-			// Remove any placeholder for this process since we found a real session
 			delete(s.sessions, "placeholder:"+proc.SessionID)
 			s.sessions[bestPath].PID = proc.PID
 			if s.sessions[bestPath].StartTime.IsZero() && !proc.StartTime.IsZero() {
 				s.sessions[bestPath].StartTime = proc.StartTime
 			}
-			if s.sessions[bestPath].Cwd == "" && proc.WorkDir != "" {
-				s.sessions[bestPath].Cwd = proc.WorkDir
+			// Always set CWD and ProjectName from the OS-level CWD
+			if proc.Cwd != "" {
+				s.sessions[bestPath].Cwd = proc.Cwd
+				s.sessions[bestPath].ProjectName = filepath.Base(proc.Cwd)
 			}
-			if s.sessions[bestPath].ProjectName == "" && proc.WorkDir != "" {
-				s.sessions[bestPath].ProjectName = filepath.Base(proc.WorkDir)
+		} else if proc.Cwd != "" {
+			// No valid session file — create placeholder
+			placeholderKey := "placeholder:" + proc.SessionID
+			s.sessions[placeholderKey] = &State{
+				SessionID:   proc.SessionID,
+				PID:         proc.PID,
+				Cwd:         proc.Cwd,
+				ProjectName: filepath.Base(proc.Cwd),
+				Status:      StatusWaiting,
+				StartTime:   proc.StartTime,
+				LastUpdate:  time.Now(),
+				FileModTime: time.Now(),
 			}
 		}
 	}

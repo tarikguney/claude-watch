@@ -195,6 +195,15 @@ func ExtractLastToolAction(rec parser.Record) string {
 	return FormatToolAction(lastToolName, lastToolInput)
 }
 
+// EncodeProjectDir converts a filesystem path to the encoded directory name
+// used by Claude Code under ~/.claude/projects/.
+// e.g., "Q:\sources\ci-seal-phase-2" -> "Q--sources-ci-seal-phase-2"
+func EncodeProjectDir(path string) string {
+	path = filepath.Clean(path)
+	r := strings.NewReplacer(":", "-", `\`, "-", "/", "-")
+	return r.Replace(path)
+}
+
 // ExtractProjectName decodes a project name from the URL-encoded directory path.
 // e.g., "-Users-tarik-myapp" -> "myapp"
 func ExtractProjectName(encodedPath string) string {
