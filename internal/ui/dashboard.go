@@ -278,10 +278,12 @@ func renderRow(s session.State, now time.Time, c cols, isCursor bool) string {
 		durationStyle.Render(pad(dur, c.dur)),
 	}
 	if c.tmux > 0 {
+		tmuxCell := tmuxStyle.Render(pad(s.TmuxSession, c.tmux))
+		if s.TmuxSession == "" {
+			tmuxCell = durationStyle.Render(pad("not in tmux", c.tmux))
+		}
 		// Insert SESSION after PID
-		cells = append(cells[:1], append([]string{
-			tmuxStyle.Render(pad(s.TmuxSession, c.tmux)),
-		}, cells[1:]...)...)
+		cells = append(cells[:1], append([]string{tmuxCell}, cells[1:]...)...)
 	}
 	return joinCols(cells)
 }
