@@ -13,6 +13,7 @@ import (
 
 	"github.com/tarikguney/claude-watch/internal/parser"
 	"github.com/tarikguney/claude-watch/internal/process"
+	"github.com/tarikguney/claude-watch/internal/tmux"
 )
 
 // Scanner discovers and manages Claude Code session files.
@@ -351,7 +352,8 @@ func deduplicateByCwd(sessions []State) []State {
 // Primary strategy: encode the process's OS-level CWD to find the project directory
 // (~/.claude/projects/<encoded-cwd>/), then pick the most recently modified .jsonl.
 // Fallback: use --session-id to locate the session file directly.
-func (s *Scanner) MatchProcesses(procs []process.Info) {
+// paneMap maps pane PIDs to tmux session/window info (nil if tmux unavailable).
+func (s *Scanner) MatchProcesses(procs []process.Info, paneMap map[int]tmux.PaneInfo) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -426,8 +428,11 @@ func (s *Scanner) MatchProcesses(procs []process.Info) {
 			}
 		}
 
+		// Resolve tmux session/window from parent PID chain
+		tmuxSession := tmux.Resolve(paneMap, proc.ParentPIDs)
+
 		if projectDir == "" {
-			s.createWaitingSession(proc)
+			s.createWaitingSession(proc, tmuxSession)
 			continue
 		}
 
@@ -451,17 +456,26 @@ func (s *Scanner) MatchProcesses(procs []process.Info) {
 
 		if bestPath != "" {
 			delete(s.sessions, "placeholder:"+proc.SessionID)
-			s.sessions[bestPath].PID = proc.PID
-			if s.sessions[bestPath].StartTime.IsZero() && !proc.StartTime.IsZero() {
-				s.sessions[bestPath].StartTime = proc.StartTime
+			st := s.sessions[bestPath]
+			st.PID = proc.PID
+			st.TmuxSession = tmuxSession
+			if st.StartTime.IsZero() && !proc.StartTime.IsZero() {
+				st.StartTime = proc.StartTime
 			}
 			// Always set CWD and ProjectName from the OS-level CWD
 			if proc.Cwd != "" {
-				s.sessions[bestPath].Cwd = proc.Cwd
-				s.sessions[bestPath].ProjectName = filepath.Base(proc.Cwd)
+				st.Cwd = proc.Cwd
+				st.ProjectName = filepath.Base(proc.Cwd)
+			}
+			// IO activity: compute read byte delta against previous sample
+			if st.prevIOReadBytes > 0 && proc.IOReadBytes > 0 {
+				st.IOActive = proc.IOReadBytes > st.prevIOReadBytes
+			}
+			if proc.IOReadBytes > 0 {
+				st.prevIOReadBytes = proc.IOReadBytes
 			}
 		} else {
-			s.createWaitingSession(proc)
+			s.createWaitingSession(proc, tmuxSession)
 		}
 	}
 
@@ -481,6 +495,8 @@ func (s *Scanner) MatchProcesses(procs []process.Info) {
 		switch state.LastRecordType {
 		case "assistant":
 			if state.LastAssistantIsWorking {
+				state.Status = StatusResponding
+			} else if state.IOActive {
 				state.Status = StatusResponding
 			} else {
 				state.Status = StatusIdle
@@ -503,7 +519,7 @@ func (s *Scanner) MatchProcesses(procs []process.Info) {
 
 // createWaitingSession creates a placeholder session for a process that has no matching
 // session file yet. Requires the caller to hold s.mu.
-func (s *Scanner) createWaitingSession(proc process.Info) {
+func (s *Scanner) createWaitingSession(proc process.Info, tmuxSession string) {
 	if proc.Cwd == "" {
 		return
 	}
@@ -512,6 +528,7 @@ func (s *Scanner) createWaitingSession(proc process.Info) {
 		PID:         proc.PID,
 		Cwd:         proc.Cwd,
 		ProjectName: filepath.Base(proc.Cwd),
+		TmuxSession: tmuxSession,
 		Status:      StatusWaiting,
 		StartTime:   proc.StartTime,
 		LastUpdate:  time.Now(),

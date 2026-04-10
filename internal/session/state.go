@@ -31,8 +31,9 @@ type State struct {
 	PID         int // OS process ID if the session has a running claude process
 	FilePath    string
 	ProjectName string
-	Cwd         string
-	OriginalTask  string
+	Cwd          string
+	TmuxSession  string // "session/window" from tmux/psmux, or ""
+	OriginalTask string
 	LastPrompt    string
 	LastResponse  string
 	CurrentAction string
@@ -51,6 +52,10 @@ type State struct {
 	LastIsSystemInjectedUser bool
 	LastHasToolResult        bool
 	LastIsInterrupt          bool
+
+	// IO-based activity detection
+	IOActive        bool   // true if read byte delta was non-zero last poll
+	prevIOReadBytes uint64 // previous cumulative read counter for delta computation
 }
 
 // idleThreshold is the duration after which a session with no result is considered Idle.

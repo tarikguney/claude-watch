@@ -23,6 +23,7 @@ var (
 	projectStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#E0A458"))            // Warm amber
 	promptStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("#7DC4A3"))             // Soft mint/teal
 	responseStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("#A0A0D0"))             // Soft lavender
+	tmuxStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("#9EC8E0")) // Soft cyan
 	actionStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("15"))
 	durationStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 	pidStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
@@ -50,6 +51,7 @@ type RenderOpts struct {
 // cols holds computed column widths for a render pass.
 type cols struct {
 	pid     int
+	tmux    int
 	project int
 	status  int
 	action  int
@@ -67,19 +69,38 @@ func getTerminalWidth() int {
 // computeCols calculates column widths from actual session data,
 // then expands the ACTION column to fill the terminal width.
 func computeCols(sessions []session.State, now time.Time) cols {
+	// Check if any session has tmux info
+	hasTmux := false
+	for _, s := range sessions {
+		if s.TmuxSession != "" {
+			hasTmux = true
+			break
+		}
+	}
+
 	// Start with minimum widths based on header text + padding
 	c := cols{
 		pid:     len("PID") + 2,
+		tmux:    0, // hidden unless tmux data exists
 		project: len("PROJECT") + 2,
 		status:  len("Interrupted") + 2, // fixed width — widest possible status
 		action:  len("CURRENT ACTION") + 2,
 		dur:     len("DURATION") + 2,
 	}
 
+	if hasTmux {
+		c.tmux = len("TMUX SESSION/WINDOW") + 2
+	}
+
 	// Expand to fit content
 	for _, s := range sessions {
 		if w := len(s.ProjectName) + 2; w > c.project {
 			c.project = w
+		}
+		if hasTmux {
+			if w := len(s.TmuxSession) + 2; w > c.tmux {
+				c.tmux = w
+			}
 		}
 		action := actionForStatus(s)
 		if w := len(action) + 2; w > c.action {
@@ -101,15 +122,22 @@ func computeCols(sessions []session.State, now time.Time) cols {
 		}
 	}
 
-	// Cap project to prevent one wide name from eating all space
+	// Cap columns to prevent one wide name from eating all space
 	if c.project > 30 {
 		c.project = 30
+	}
+	if c.tmux > 40 {
+		c.tmux = 40
 	}
 
 	// Expand ACTION to fill remaining terminal width
 	termW := getTerminalWidth()
-	separators := 4 * 3 // 4 " │ " separators
-	fixed := c.pid + c.project + c.status + c.dur + separators
+	numSep := 4 // PID, PROJECT, STATUS, DURATION boundaries
+	if hasTmux {
+		numSep = 5 // + SESSION boundary
+	}
+	separators := numSep * 3 // " │ " = 3 chars each
+	fixed := c.pid + c.tmux + c.project + c.status + c.dur + separators
 	remaining := termW - fixed
 	if remaining > c.action {
 		c.action = remaining
@@ -160,15 +188,24 @@ func Render(sessions []session.State, opts RenderOpts, hiddenCount int) string {
 	}
 	b.WriteString(title + " " + subtitle + "  " + timestamp + hidden + "\n")
 
-	tw := totalWidth([]int{c.pid, c.project, c.status, c.action, c.dur})
-	b.WriteString(hline("─", tw) + "\n")
-	b.WriteString(joinCols([]string{
+	widths := []int{c.pid, c.project, c.status, c.action, c.dur}
+	headers := []string{
 		colHeaderStyle.Render(pad("PID", c.pid)),
 		colHeaderStyle.Render(pad("PROJECT", c.project)),
 		colHeaderStyle.Render(pad("STATUS", c.status)),
 		colHeaderStyle.Render(pad("CURRENT ACTION", c.action)),
 		colHeaderStyle.Render(pad("DURATION", c.dur)),
-	}) + "\n")
+	}
+	if c.tmux > 0 {
+		// Insert SESSION after PID
+		widths = append(widths[:1], append([]int{c.tmux}, widths[1:]...)...)
+		headers = append(headers[:1], append([]string{
+			colHeaderStyle.Render(pad("TMUX SESSION/WINDOW", c.tmux)),
+		}, headers[1:]...)...)
+	}
+	tw := totalWidth(widths)
+	b.WriteString(hline("─", tw) + "\n")
+	b.WriteString(joinCols(headers) + "\n")
 	b.WriteString(hline("─", tw) + "\n")
 
 	for i, s := range sessions {
@@ -233,13 +270,20 @@ func renderRow(s session.State, now time.Time, c cols, isCursor bool) string {
 		pidStr = pidStyle.Render(pad(pidStr, c.pid))
 	}
 
-	return joinCols([]string{
+	cells := []string{
 		pidStr,
 		projectStyle.Render(pad(s.ProjectName, c.project)),
 		styledStatus(s.Status, c.status),
 		actionStyle.Render(pad(action, c.action)),
 		durationStyle.Render(pad(dur, c.dur)),
-	})
+	}
+	if c.tmux > 0 {
+		// Insert SESSION after PID
+		cells = append(cells[:1], append([]string{
+			tmuxStyle.Render(pad(s.TmuxSession, c.tmux)),
+		}, cells[1:]...)...)
+	}
+	return joinCols(cells)
 }
 
 func styledStatus(status session.Status, width int) string {

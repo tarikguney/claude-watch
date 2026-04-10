@@ -28,27 +28,27 @@ func TestParseUnixLine(t *testing.T) {
 	}{
 		{
 			name:     "standard lstart with double-space day",
-			line:     "12345 Sun Apr  6 10:53:38 2026 /home/user/.local/share/claude/versions/2.1.92/claude --session-id 2c8d67fc-e59a-4a9e-af4d-2878b83ffe84 --dangerously-skip-permissions --add-dir /sources/project",
+			line:     "12345  6789 Sun Apr  6 10:53:38 2026 /home/user/.local/share/claude/versions/2.1.92/claude --session-id 2c8d67fc-e59a-4a9e-af4d-2878b83ffe84 --dangerously-skip-permissions --add-dir /sources/project",
 			wantPID:  12345,
 			wantSID:  "2c8d67fc-e59a-4a9e-af4d-2878b83ffe84",
 			wantYear: 2026,
 		},
 		{
 			name:     "two-digit day",
-			line:     "  999 Mon Apr 16 09:01:02 2026 /usr/local/bin/claude --session-id abcdef01-2345-6789-abcd-ef0123456789 --add-dir /home/user/myapp",
+			line:     "  999   100 Mon Apr 16 09:01:02 2026 /usr/local/bin/claude --session-id abcdef01-2345-6789-abcd-ef0123456789 --add-dir /home/user/myapp",
 			wantPID:  999,
 			wantSID:  "abcdef01-2345-6789-abcd-ef0123456789",
 			wantYear: 2026,
 		},
 		{
 			name:    "no add-dir flag",
-			line:    "54321 Tue Jan 10 14:30:00 2026 /home/user/.local/bin/claude --session-id 11111111-2222-3333-4444-555555555555 --mcp-config /tmp/claude-mcp-abc.json",
+			line:    "54321  1111 Tue Jan 10 14:30:00 2026 /home/user/.local/bin/claude --session-id 11111111-2222-3333-4444-555555555555 --mcp-config /tmp/claude-mcp-abc.json",
 			wantPID: 54321,
 			wantSID: "11111111-2222-3333-4444-555555555555",
 		},
 		{
 			name:    "no session id — not a claude session",
-			line:    "11111 Thu Feb 20 12:00:00 2026 /usr/bin/some-other-process",
+			line:    "11111  2222 Thu Feb 20 12:00:00 2026 /usr/bin/some-other-process",
 			wantPID: 11111,
 			wantSID: "",
 		},
@@ -73,8 +73,8 @@ func TestParseUnixLine(t *testing.T) {
 }
 
 func TestParsePipedLines(t *testing.T) {
-	input := `33416|2026-04-06T10:53:38.3082190-06:00|"C:\Users\user\.claude-cli\2.1.92\claude.exe" --session-id 2c8d67fc-e59a-4a9e-af4d-2878b83ffe84 --add-dir Q:/sources/project
-23208|2026-04-06T10:55:03.8656050-06:00|"C:\Users\user\.claude-cli\2.1.92\claude.exe" --session-id ee8e923a-24b3-46d5-a97e-153ca47848cd --add-dir Q:/sources/other
+	input := `33416|1234|2026-04-06T10:53:38.3082190-06:00|"C:\Users\user\.claude-cli\2.1.92\claude.exe" --session-id 2c8d67fc-e59a-4a9e-af4d-2878b83ffe84 --add-dir Q:/sources/project
+23208|5678|2026-04-06T10:55:03.8656050-06:00|"C:\Users\user\.claude-cli\2.1.92\claude.exe" --session-id ee8e923a-24b3-46d5-a97e-153ca47848cd --add-dir Q:/sources/other
 `
 
 	results, err := parsePipedLines(input)

@@ -20,6 +20,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/tarikguney/claude-watch/internal/process"
 	"github.com/tarikguney/claude-watch/internal/session"
+	"github.com/tarikguney/claude-watch/internal/tmux"
 	"github.com/tarikguney/claude-watch/internal/ui"
 )
 
@@ -286,7 +287,13 @@ func refreshProcesses(scanner *session.Scanner) {
 	if err != nil {
 		return // silently ignore process discovery errors
 	}
-	scanner.MatchProcesses(procs)
+	// Sample IO read counters for each process (best-effort)
+	for i := range procs {
+		procs[i].IOReadBytes, _ = process.GetIOReadBytes(procs[i].PID)
+	}
+	// Query tmux/psmux pane mapping (nil if not available)
+	paneMap := tmux.ListPanes()
+	scanner.MatchProcesses(procs, paneMap)
 	// Load any newly discovered sessions from process matching
 	scanner.LoadAll()
 }
