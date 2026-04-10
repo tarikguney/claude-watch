@@ -504,13 +504,10 @@ func (s *Scanner) MatchProcesses(procs []process.Info, paneMap map[int]tmux.Pane
 		case "user":
 			if state.LastIsInterrupt {
 				state.Status = StatusInterrupted
-			} else if state.LastIsSystemInjectedUser {
-				// System-injected records (tool results, system reminders) with a
-				// running process should show Responding — reminders get written
-				// during long tool calls and don't mean Claude is idle.
+			} else if state.IOActive {
 				state.Status = StatusResponding
 			} else {
-				state.Status = StatusResponding
+				state.Status = StatusIdle
 			}
 		}
 	}
