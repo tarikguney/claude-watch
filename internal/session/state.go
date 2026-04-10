@@ -55,6 +55,7 @@ type State struct {
 
 	// IO-based activity detection
 	IOActive        bool   // true if read byte delta was non-zero last poll
+	prevIOPID       int    // PID that prevIOReadBytes came from (avoid cross-process comparison)
 	prevIOReadBytes uint64 // previous cumulative read counter for delta computation
 }
 
@@ -66,7 +67,8 @@ const activeThreshold = 2 * time.Minute
 
 // DeriveStatus computes the session status from the last record and its timestamp.
 // processRunning indicates whether the session has a live OS process (PID > 0).
-func DeriveStatus(rec parser.Record, lastToolResultIsError bool, now time.Time, processRunning bool) Status {
+// ioActive indicates whether the process had IO read byte delta since last poll.
+func DeriveStatus(rec parser.Record, lastToolResultIsError bool, now time.Time, processRunning bool, ioActive bool) Status {
 	recTime, err := time.Parse(time.RFC3339Nano, rec.Timestamp)
 	if err != nil {
 		recTime = time.Now()
@@ -93,6 +95,9 @@ func DeriveStatus(rec parser.Record, lastToolResultIsError bool, now time.Time, 
 		if isAssistantWorking(rec) {
 			return StatusResponding
 		}
+		if ioActive {
+			return StatusResponding
+		}
 		// Text-only assistant message — Claude finished and is waiting for input.
 		return StatusIdle
 
@@ -100,24 +105,16 @@ func DeriveStatus(rec parser.Record, lastToolResultIsError bool, now time.Time, 
 		if rec.IsInterruptRecord() {
 			return StatusInterrupted
 		}
+		if ioActive {
+			return StatusResponding
+		}
 		if rec.IsSystemInjectedUser() {
-			if rec.HasToolResult() {
-				// Tool result — Claude is processing the output
-				if processRunning {
-					return StatusResponding
-				}
-				return StatusIdle
-			}
-			// System-injected without tool_result (e.g., <system-reminder>).
-			// These get written during long tool calls or thinking and don't
-			// represent a state change — keep Responding if the process is alive.
-			if processRunning {
-				return StatusResponding
-			}
+			// System-injected records without IO (e.g., /copy output, stale
+			// system-reminders) — Claude isn't actively working on these.
 			return StatusIdle
 		}
-		// Real user prompt — Claude is working on it
-		if age < activeThreshold || processRunning {
+		// Real user prompt — give Claude a grace period to start processing.
+		if age < activeThreshold {
 			return StatusResponding
 		}
 		return StatusIdle

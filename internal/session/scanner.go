@@ -125,7 +125,7 @@ func (s *Scanner) LoadSession(path string) error {
 	lastIsInterrupt := lastRec.IsInterruptRecord()
 	status := StatusIdle
 	if len(tailRecords) > 0 {
-		status = DeriveStatus(lastRec, isError, now, state.PID > 0)
+		status = DeriveStatus(lastRec, isError, now, state.PID > 0, state.IOActive)
 	}
 
 	var startTime time.Time
@@ -209,7 +209,7 @@ func (s *Scanner) UpdateSession(path string) error {
 	lastResponse := ExtractLastResponse(newRecords)
 	isError := CheckLastToolResultError(newRecords)
 	lastAssistantWorking := isAssistantWorking(lastRec)
-	status := DeriveStatus(lastRec, isError, now, state.PID > 0)
+	status := DeriveStatus(lastRec, isError, now, state.PID > 0, state.IOActive)
 
 	newCwd := ""
 	for _, rec := range newRecords {
@@ -467,10 +467,15 @@ func (s *Scanner) MatchProcesses(procs []process.Info, paneMap map[int]tmux.Pane
 				st.Cwd = proc.Cwd
 				st.ProjectName = filepath.Base(proc.Cwd)
 			}
-			// IO activity: compute read byte delta against previous sample
-			if st.prevIOReadBytes > 0 && proc.IOReadBytes > 0 {
+			// IO activity: compute read byte delta against previous sample.
+			// Only compare when the same PID matched last time — different
+			// processes have different cumulative IO and would produce false deltas.
+			if st.prevIOPID == proc.PID && st.prevIOReadBytes > 0 && proc.IOReadBytes > 0 {
 				st.IOActive = proc.IOReadBytes > st.prevIOReadBytes
+			} else {
+				st.IOActive = false
 			}
+			st.prevIOPID = proc.PID
 			if proc.IOReadBytes > 0 {
 				st.prevIOReadBytes = proc.IOReadBytes
 			}
@@ -506,8 +511,16 @@ func (s *Scanner) MatchProcesses(procs []process.Info, paneMap map[int]tmux.Pane
 				state.Status = StatusInterrupted
 			} else if state.IOActive {
 				state.Status = StatusResponding
-			} else {
+			} else if state.LastIsSystemInjectedUser {
 				state.Status = StatusIdle
+			} else {
+				// Real user prompt — respect the activeThreshold grace period
+				recTime, err := time.Parse(time.RFC3339Nano, state.LastRecordTimestamp)
+				if err == nil && time.Since(recTime) < activeThreshold {
+					state.Status = StatusResponding
+				} else {
+					state.Status = StatusIdle
+				}
 			}
 		}
 	}
