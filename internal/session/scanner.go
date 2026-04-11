@@ -125,7 +125,7 @@ func (s *Scanner) LoadSession(path string) error {
 	lastIsInterrupt := lastRec.IsInterruptRecord()
 	status := StatusIdle
 	if len(tailRecords) > 0 {
-		status = DeriveStatus(lastRec, isError, now, state.PID > 0, state.IOActive)
+		status = DeriveStatus(lastRec, isError, now, state.PID > 0)
 	}
 
 	var startTime time.Time
@@ -209,7 +209,7 @@ func (s *Scanner) UpdateSession(path string) error {
 	lastResponse := ExtractLastResponse(newRecords)
 	isError := CheckLastToolResultError(newRecords)
 	lastAssistantWorking := isAssistantWorking(lastRec)
-	status := DeriveStatus(lastRec, isError, now, state.PID > 0, state.IOActive)
+	status := DeriveStatus(lastRec, isError, now, state.PID > 0)
 
 	newCwd := ""
 	for _, rec := range newRecords {
@@ -429,10 +429,10 @@ func (s *Scanner) MatchProcesses(procs []process.Info, paneMap map[int]tmux.Pane
 		}
 
 		// Resolve tmux session/window from parent PID chain
-		tmuxSession := tmux.Resolve(paneMap, proc.ParentPIDs)
+		tmuxSession, tmuxPaneID := tmux.Resolve(paneMap, proc.ParentPIDs)
 
 		if projectDir == "" {
-			s.createWaitingSession(proc, tmuxSession)
+			s.createWaitingSession(proc, tmuxSession, tmuxPaneID)
 			continue
 		}
 
@@ -459,6 +459,7 @@ func (s *Scanner) MatchProcesses(procs []process.Info, paneMap map[int]tmux.Pane
 			st := s.sessions[bestPath]
 			st.PID = proc.PID
 			st.TmuxSession = tmuxSession
+			st.TmuxPaneID = tmuxPaneID
 			if st.StartTime.IsZero() && !proc.StartTime.IsZero() {
 				st.StartTime = proc.StartTime
 			}
@@ -467,20 +468,8 @@ func (s *Scanner) MatchProcesses(procs []process.Info, paneMap map[int]tmux.Pane
 				st.Cwd = proc.Cwd
 				st.ProjectName = filepath.Base(proc.Cwd)
 			}
-			// IO activity: compute read byte delta against previous sample.
-			// Only compare when the same PID matched last time — different
-			// processes have different cumulative IO and would produce false deltas.
-			if st.prevIOPID == proc.PID && st.prevIOReadBytes > 0 && proc.IOReadBytes > 0 {
-				st.IOActive = proc.IOReadBytes > st.prevIOReadBytes
-			} else {
-				st.IOActive = false
-			}
-			st.prevIOPID = proc.PID
-			if proc.IOReadBytes > 0 {
-				st.prevIOReadBytes = proc.IOReadBytes
-			}
 		} else {
-			s.createWaitingSession(proc, tmuxSession)
+			s.createWaitingSession(proc, tmuxSession, tmuxPaneID)
 		}
 	}
 
@@ -501,16 +490,12 @@ func (s *Scanner) MatchProcesses(procs []process.Info, paneMap map[int]tmux.Pane
 		case "assistant":
 			if state.LastAssistantIsWorking {
 				state.Status = StatusResponding
-			} else if state.IOActive {
-				state.Status = StatusResponding
 			} else {
 				state.Status = StatusIdle
 			}
 		case "user":
 			if state.LastIsInterrupt {
 				state.Status = StatusInterrupted
-			} else if state.IOActive {
-				state.Status = StatusResponding
 			} else if state.LastIsSystemInjectedUser {
 				state.Status = StatusIdle
 			} else {
@@ -529,7 +514,7 @@ func (s *Scanner) MatchProcesses(procs []process.Info, paneMap map[int]tmux.Pane
 
 // createWaitingSession creates a placeholder session for a process that has no matching
 // session file yet. Requires the caller to hold s.mu.
-func (s *Scanner) createWaitingSession(proc process.Info, tmuxSession string) {
+func (s *Scanner) createWaitingSession(proc process.Info, tmuxSession, tmuxPaneID string) {
 	if proc.Cwd == "" {
 		return
 	}
@@ -539,6 +524,7 @@ func (s *Scanner) createWaitingSession(proc process.Info, tmuxSession string) {
 		Cwd:         proc.Cwd,
 		ProjectName: filepath.Base(proc.Cwd),
 		TmuxSession: tmuxSession,
+		TmuxPaneID:  tmuxPaneID,
 		Status:      StatusWaiting,
 		StartTime:   proc.StartTime,
 		LastUpdate:  time.Now(),

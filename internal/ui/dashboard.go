@@ -46,6 +46,7 @@ type RenderOpts struct {
 	Compact   bool
 	CursorPID int          // PID of selected session (0 = no cursor)
 	Expanded  map[int]bool // keyed by PID; true = expanded (default is collapsed)
+	StatusMsg string       // transient flash message (e.g. navigation errors)
 }
 
 // cols holds computed column widths for a render pass.
@@ -126,8 +127,8 @@ func computeCols(sessions []session.State, now time.Time) cols {
 	if c.project > 30 {
 		c.project = 30
 	}
-	if c.tmux > 40 {
-		c.tmux = 40
+	if c.tmux > 25 {
+		c.tmux = 25
 	}
 
 	// Expand ACTION to fill remaining terminal width
@@ -241,10 +242,15 @@ func Render(sessions []session.State, opts RenderOpts, hiddenCount int) string {
 		b.WriteString(
 			helpKeyStyle.Render("↑↓") + helpTextStyle.Render(" Navigate  ") +
 				helpKeyStyle.Render("Enter") + helpTextStyle.Render(" Toggle  ") +
+				helpKeyStyle.Render("g") + helpTextStyle.Render(" Go to Pane  ") +
 				helpKeyStyle.Render("e") + helpTextStyle.Render(" Expand All  ") +
 				helpKeyStyle.Render("c") + helpTextStyle.Render(" Collapse All  ") +
 				helpKeyStyle.Render("q") + helpTextStyle.Render(" Quit"),
 		)
+		if opts.StatusMsg != "" {
+			warnStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("11")) // yellow
+			b.WriteString("\n" + warnStyle.Render("  "+opts.StatusMsg))
+		}
 	}
 
 	return b.String()
@@ -297,7 +303,10 @@ func styledStatus(status session.Status, width int) string {
 }
 
 func pad(s string, width int) string {
-	if len(s) >= width {
+	if len(s) > width {
+		if width > 3 {
+			return s[:width-3] + "..."
+		}
 		return s[:width]
 	}
 	return s + strings.Repeat(" ", width-len(s))

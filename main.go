@@ -33,6 +33,7 @@ const (
 	keyToggle
 	keyExpandAll
 	keyCollapseAll
+	keyGoToPane
 )
 
 func readKeys(input *os.File, ch chan<- keyEvent) {
@@ -47,6 +48,8 @@ func readKeys(input *os.File, ch chan<- keyEvent) {
 			return
 		case 0x0d, 0x20: // Enter, Space
 			ch <- keyToggle
+		case 'g', 'G':
+			ch <- keyGoToPane
 		case 'e':
 			ch <- keyExpandAll
 		case 'c':
@@ -145,7 +148,10 @@ func run(claudeDir string, refresh time.Duration, compact bool, maxAge time.Dura
 	inputFile, rawCleanup, rawErr := setupRawInput()
 	scrollEnabled := rawErr == nil
 	if scrollEnabled {
-		defer rawCleanup()
+		defer func() {
+			os.Stdout.WriteString("\x1b[?25h") // restore cursor visibility
+			rawCleanup()
+		}()
 	} else {
 		fmt.Fprintf(os.Stderr, "Warning: keyboard input unavailable (%v)\n", rawErr)
 	}
@@ -177,6 +183,8 @@ func run(claudeDir string, refresh time.Duration, compact bool, maxAge time.Dura
 	var scrollOffset int
 	cursorIdx := 0
 	expanded := make(map[int]bool) // default collapsed; tracks explicitly expanded sessions
+	var statusMsg string
+	var statusExpiry time.Time
 
 	ticker := time.NewTicker(refresh)
 	defer ticker.Stop()
@@ -209,10 +217,15 @@ func run(claudeDir string, refresh time.Duration, compact bool, maxAge time.Dura
 		if len(sessions) > 0 {
 			cursorPID = sessions[cursorIdx].PID
 		}
+		var flash string
+		if time.Now().Before(statusExpiry) {
+			flash = statusMsg
+		}
 		opts := ui.RenderOpts{
 			Compact:   compact,
 			CursorPID: cursorPID,
-			Expanded: expanded,
+			Expanded:  expanded,
+			StatusMsg: flash,
 		}
 		renderWithScroll(sessions, opts, &scrollOffset, cursorPID)
 	}
@@ -256,6 +269,19 @@ func run(claudeDir string, refresh time.Duration, compact bool, maxAge time.Dura
 					for k := range expanded {
 						delete(expanded, k)
 					}
+				case keyGoToPane:
+					if cursorIdx < count {
+						s := sessions[cursorIdx]
+						if s.TmuxSession == "" {
+							statusMsg = "Session not in tmux"
+							statusExpiry = time.Now().Add(3 * time.Second)
+						} else {
+							if err := tmux.SwitchToPane(s.TmuxSession); err != nil {
+								statusMsg = fmt.Sprintf("Switch failed: %v", err)
+								statusExpiry = time.Now().Add(3 * time.Second)
+							}
+						}
+					}
 				case keyQuit:
 					return true
 				}
@@ -286,10 +312,6 @@ func refreshProcesses(scanner *session.Scanner) {
 	procs, err := process.ListClaude()
 	if err != nil {
 		return // silently ignore process discovery errors
-	}
-	// Sample IO read counters for each process (best-effort)
-	for i := range procs {
-		procs[i].IOReadBytes, _ = process.GetIOReadBytes(procs[i].PID)
 	}
 	// Query tmux/psmux pane mapping (nil if not available)
 	paneMap := tmux.ListPanes()
@@ -343,11 +365,12 @@ func renderWithScroll(sessions []session.State, opts ui.RenderOpts, scrollOffset
 
 	// Build entire frame in a buffer, then write once (avoids per-line syscalls)
 	var buf strings.Builder
-	buf.WriteString("\x1b[2J\x1b[H") // clear screen + cursor home
+	buf.WriteString("\x1b[?25l\x1b[2J\x1b[H") // hide cursor + clear screen + cursor home
 
 	if len(lines) <= termH {
 		*scrollOffset = 0
 		buf.WriteString(dashboard)
+		buf.WriteString("\x1b[J") // clear from cursor to end of screen
 		os.Stdout.WriteString(buf.String())
 		return
 	}
@@ -410,6 +433,7 @@ func renderWithScroll(sessions []session.State, opts ui.RenderOpts, scrollOffset
 		buf.WriteString("scroll")
 	}
 
+	buf.WriteString("\x1b[J") // clear from cursor to end of screen
 	os.Stdout.WriteString(buf.String())
 }
 

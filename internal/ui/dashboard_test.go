@@ -152,8 +152,11 @@ func TestPad(t *testing.T) {
 	if result := pad("abc", 5); result != "abc  " {
 		t.Errorf("expected 'abc  ', got %q", result)
 	}
-	if result := pad("abcdef", 4); result != "abcd" {
-		t.Errorf("expected 'abcd', got %q", result)
+	if result := pad("abcdefgh", 6); result != "abc..." {
+		t.Errorf("expected 'abc...', got %q", result)
+	}
+	if result := pad("abcd", 3); result != "abc" {
+		t.Errorf("expected 'abc' (short width, no ellipsis), got %q", result)
 	}
 	if result := pad("abc", 3); result != "abc" {
 		t.Errorf("expected 'abc', got %q", result)

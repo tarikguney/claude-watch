@@ -12,12 +12,11 @@ import (
 
 // Info holds metadata extracted from a running Claude process.
 type Info struct {
-	PID         int
-	SessionID   string
-	Cwd         string // current working directory read from OS
-	StartTime   time.Time
-	IOReadBytes uint64 // cumulative read bytes from OS IO counters
-	ParentPIDs  []int  // ancestor PIDs from parent up (for tmux pane matching)
+	PID        int
+	SessionID  string
+	Cwd        string // current working directory read from OS
+	StartTime  time.Time
+	ParentPIDs []int // ancestor PIDs from parent up (for tmux pane matching)
 }
 
 var sessionIDRe = regexp.MustCompile(`--session-id\s+([0-9a-f-]{36})`)

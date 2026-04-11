@@ -5,6 +5,7 @@
 package tmux
 
 import (
+	"fmt"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -13,6 +14,7 @@ import (
 // PaneInfo holds the tmux/psmux session and window name for a pane.
 type PaneInfo struct {
 	PanePID     int
+	PaneID      string // tmux pane unique ID, e.g. "%5"
 	SessionName string
 	WindowName  string
 }
@@ -75,7 +77,7 @@ func listSessions(bin string) []string {
 // listSessionPanes returns pane info for all panes in a given session.
 func listSessionPanes(bin, sessionName string) []PaneInfo {
 	out, err := exec.Command(bin, "list-panes", "-s", "-t", sessionName,
-		"-F", "#{pane_pid} #{session_name} #{window_name}").Output()
+		"-F", "#{pane_pid} #{pane_id} #{session_name} #{window_name}").Output()
 	if err != nil {
 		return nil
 	}
@@ -85,8 +87,8 @@ func listSessionPanes(bin, sessionName string) []PaneInfo {
 		if line == "" {
 			continue
 		}
-		parts := strings.SplitN(line, " ", 3)
-		if len(parts) < 3 {
+		parts := strings.SplitN(line, " ", 4)
+		if len(parts) < 4 {
 			continue
 		}
 		pid, err := strconv.Atoi(parts[0])
@@ -95,8 +97,9 @@ func listSessionPanes(bin, sessionName string) []PaneInfo {
 		}
 		panes = append(panes, PaneInfo{
 			PanePID:     pid,
-			SessionName: parts[1],
-			WindowName:  parts[2],
+			PaneID:      parts[1],
+			SessionName: parts[2],
+			WindowName:  parts[3],
 		})
 	}
 	return panes
@@ -104,12 +107,27 @@ func listSessionPanes(bin, sessionName string) []PaneInfo {
 
 // Resolve finds the tmux session/window for a process by walking its parent
 // PID chain and matching against pane PIDs.
-// Returns "session/window" or "" if no match.
-func Resolve(paneMap map[int]PaneInfo, parentPIDs []int) string {
+// Returns ("session/window", paneID) or ("", "") if no match.
+func Resolve(paneMap map[int]PaneInfo, parentPIDs []int) (string, string) {
 	for _, ppid := range parentPIDs {
 		if info, ok := paneMap[ppid]; ok {
-			return info.SessionName + "/" + info.WindowName
+			return info.SessionName + "/" + info.WindowName, info.PaneID
 		}
 	}
-	return ""
+	return "", ""
+}
+
+// SwitchToPane switches the current tmux client to the given session and window.
+// target should be in "session/window" format (as stored in State.TmuxSession).
+func SwitchToPane(target string) error {
+	bin := tmuxBin()
+	if bin == "" {
+		return fmt.Errorf("no tmux binary available")
+	}
+	// Convert "session/window" to "session:window" for tmux target syntax
+	tmuxTarget := strings.Replace(target, "/", ":", 1)
+	if out, err := exec.Command(bin, "switch-client", "-t", tmuxTarget).CombinedOutput(); err != nil {
+		return fmt.Errorf("%s", strings.TrimSpace(string(out)))
+	}
+	return nil
 }
