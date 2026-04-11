@@ -219,7 +219,7 @@ func ExtractOriginalTask(records []parser.Record) string {
 				if strings.HasPrefix(trimmed, "[Request interrupted by user") {
 					continue
 				}
-				return truncate(trimmed, 50)
+				return truncate(trimmed, 200)
 			}
 		}
 	}
@@ -248,7 +248,7 @@ func ExtractLastResponse(records []parser.Record) string {
 			}
 		}
 		if lastText != "" {
-			return truncate(strings.TrimSpace(lastText), 70)
+			return truncate(strings.TrimSpace(lastText), 200)
 		}
 	}
 	return ""
@@ -277,7 +277,7 @@ func ExtractLastPrompt(records []parser.Record) string {
 				if strings.HasPrefix(trimmed, "[Request interrupted by user") {
 					continue
 				}
-				return truncate(trimmed, 60)
+				return truncate(trimmed, 200)
 			}
 		}
 	}

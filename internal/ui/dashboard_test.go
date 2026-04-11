@@ -13,7 +13,7 @@ import (
 )
 
 func TestRender_EmptySessions(t *testing.T) {
-	output := Render(nil, RenderOpts{}, 0)
+	output := Render(nil, false)
 	if !strings.Contains(output, "CLAUDE WATCH") {
 		t.Error("expected header 'CLAUDE WATCH'")
 	}
@@ -51,7 +51,7 @@ func TestRender_WithSessions(t *testing.T) {
 		},
 	}
 
-	output := Render(sessions, RenderOpts{}, 0)
+	output := Render(sessions, false)
 
 	if !strings.Contains(output, "CLAUDE WATCH") {
 		t.Error("expected header")
@@ -86,7 +86,7 @@ func TestRender_Compact(t *testing.T) {
 		},
 	}
 
-	output := Render(sessions, RenderOpts{Compact: true}, 0)
+	output := Render(sessions, true)
 	if !strings.Contains(output, "CLAUDE WATCH") {
 		t.Error("expected header in compact mode")
 	}
@@ -125,7 +125,7 @@ func TestRender_SortOrder(t *testing.T) {
 		},
 	}
 
-	output := Render(sessions, RenderOpts{}, 0)
+	output := Render(sessions, false)
 
 	lowIdx := strings.Index(output, "low-pid")
 	midIdx := strings.Index(output, "mid-pid")
@@ -145,20 +145,5 @@ func TestStatusPriority(t *testing.T) {
 	}
 	if statusPriority(session.StatusIdle) >= statusPriority(session.StatusDone) {
 		t.Error("Idle should have higher priority than Done")
-	}
-}
-
-func TestPad(t *testing.T) {
-	if result := pad("abc", 5); result != "abc  " {
-		t.Errorf("expected 'abc  ', got %q", result)
-	}
-	if result := pad("abcdefgh", 6); result != "abc..." {
-		t.Errorf("expected 'abc...', got %q", result)
-	}
-	if result := pad("abcd", 3); result != "abc" {
-		t.Errorf("expected 'abc' (short width, no ellipsis), got %q", result)
-	}
-	if result := pad("abc", 3); result != "abc" {
-		t.Errorf("expected 'abc', got %q", result)
 	}
 }
