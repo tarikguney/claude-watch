@@ -5,6 +5,7 @@
 package parser
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -14,14 +15,30 @@ import (
 
 // Record represents a single JSONL record from a Claude Code session transcript.
 type Record struct {
-	Type      string          `json:"type"`
-	UUID      string          `json:"uuid"`
-	ParentUUID string         `json:"parentUuid"`
-	Timestamp string          `json:"timestamp"`
-	SessionID string          `json:"sessionId"`
-	Cwd       string          `json:"cwd"`
-	Message   json.RawMessage `json:"message"`
-	IsMeta    bool            `json:"isMeta"`
+	Type       string          `json:"type"`
+	Subtype    string          `json:"subtype,omitempty"`
+	UUID       string          `json:"uuid"`
+	ParentUUID string          `json:"parentUuid"`
+	Timestamp  string          `json:"timestamp"`
+	SessionID  string          `json:"sessionId"`
+	Cwd        string          `json:"cwd"`
+	Message    json.RawMessage `json:"message"`
+	IsMeta     bool            `json:"isMeta"`
+}
+
+// IsStatusRelevant returns true if this record type is meaningful for status
+// derivation. Records like file-history-snapshot, tool_reference, and
+// queue-operation are ambiguous (appear during both active and idle phases)
+// and should be skipped to preserve the previous status.
+// Attachment records ARE relevant — they only appear between user prompts
+// and assistant responses, signaling active context loading.
+func (r Record) IsStatusRelevant() bool {
+	switch r.Type {
+	case "user", "assistant", "result", "system", "attachment":
+		return true
+	default:
+		return false
+	}
 }
 
 // IsSystemInjectedUser returns true if this is a user-type record that was
@@ -105,9 +122,10 @@ func (r Record) HasToolResult() bool {
 
 // MessageContent represents the message field of a record.
 type MessageContent struct {
-	Role    string          `json:"role"`
-	Content json.RawMessage `json:"content"`
-	Model   string          `json:"model"`
+	Role       string          `json:"role"`
+	Content    json.RawMessage `json:"content"`
+	Model      string          `json:"model"`
+	StopReason *string         `json:"stop_reason,omitempty"`
 }
 
 // ContentBlock represents a single block in the content array.
@@ -150,7 +168,8 @@ func ReadHead(path string) ([]Record, error) {
 }
 
 // ReadNewBytes reads bytes appended since the given offset and returns parsed records
-// along with the new offset.
+// along with the new offset. Only advances offset to the last complete newline so that
+// partial lines are not lost between reads.
 func ReadNewBytes(path string, offset int64) ([]Record, int64, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -178,8 +197,17 @@ func ReadNewBytes(path string, offset int64) ([]Record, int64, error) {
 	}
 	data = data[:n]
 
-	records := ParseLines(data)
-	return records, offset + int64(n), nil
+	// Find the last newline — only commit offset up to there so partial
+	// trailing lines are re-read on the next call.
+	lastNL := bytes.LastIndexByte(data, '\n')
+	if lastNL < 0 {
+		// No complete line yet — don't advance offset.
+		return nil, offset, nil
+	}
+
+	complete := data[:lastNL+1]
+	records := ParseLines(complete)
+	return records, offset + int64(lastNL+1), nil
 }
 
 // ParseLines splits raw bytes on newlines and parses each line as a JSONL Record.

@@ -146,4 +146,101 @@ func TestStatusPriority(t *testing.T) {
 	if statusPriority(session.StatusIdle) >= statusPriority(session.StatusDone) {
 		t.Error("Idle should have higher priority than Done")
 	}
+	// New statuses should have same priority as Responding
+	if statusPriority(session.StatusThinking) != statusPriority(session.StatusResponding) {
+		t.Error("Thinking should have same priority as Responding")
+	}
+	if statusPriority(session.StatusToolUse) != statusPriority(session.StatusResponding) {
+		t.Error("ToolUse should have same priority as Responding")
+	}
+	if statusPriority(session.StatusStreaming) != statusPriority(session.StatusResponding) {
+		t.Error("Streaming should have same priority as Responding")
+	}
+}
+
+func TestActionForStatus_NewStatuses(t *testing.T) {
+	tests := []struct {
+		name     string
+		state    session.State
+		expected string
+	}{
+		{
+			name:     "Thinking shows Thinking...",
+			state:    session.State{Status: session.StatusThinking},
+			expected: "Thinking...",
+		},
+		{
+			name:     "ToolUse with action shows action",
+			state:    session.State{Status: session.StatusToolUse, CurrentAction: "Reading main.go"},
+			expected: "Reading main.go",
+		},
+		{
+			name:     "ToolUse without action shows default",
+			state:    session.State{Status: session.StatusToolUse},
+			expected: "Executing tool...",
+		},
+		{
+			name:     "Streaming shows Streaming response...",
+			state:    session.State{Status: session.StatusStreaming},
+			expected: "Streaming response...",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := actionForStatus(tt.state)
+			if got != tt.expected {
+				t.Errorf("expected %q, got %q", tt.expected, got)
+			}
+		})
+	}
+}
+
+func TestRender_NewStatuses(t *testing.T) {
+	now := time.Now()
+	sessions := []session.State{
+		{
+			PID:           101,
+			ProjectName:   "thinking-project",
+			Status:        session.StatusThinking,
+			StartTime:     now.Add(-1 * time.Minute),
+			LastUpdate:    now,
+		},
+		{
+			PID:           102,
+			ProjectName:   "tool-project",
+			CurrentAction: "Editing auth.go",
+			Status:        session.StatusToolUse,
+			StartTime:     now.Add(-2 * time.Minute),
+			LastUpdate:    now,
+		},
+		{
+			PID:           103,
+			ProjectName:   "stream-project",
+			Status:        session.StatusStreaming,
+			StartTime:     now.Add(-3 * time.Minute),
+			LastUpdate:    now,
+		},
+	}
+
+	output := Render(sessions, false)
+
+	if !strings.Contains(output, "Thinking") {
+		t.Error("expected 'Thinking' status in output")
+	}
+	if !strings.Contains(output, "Tool Use") {
+		t.Error("expected 'Tool Use' status in output")
+	}
+	if !strings.Contains(output, "Streaming") {
+		t.Error("expected 'Streaming' status in output")
+	}
+	if !strings.Contains(output, "Thinking...") {
+		t.Error("expected 'Thinking...' action text")
+	}
+	if !strings.Contains(output, "Editing auth.go") {
+		t.Error("expected tool action text")
+	}
+	if !strings.Contains(output, "Streaming response...") {
+		t.Error("expected 'Streaming response...' action text")
+	}
 }

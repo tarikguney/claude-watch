@@ -32,12 +32,15 @@ var (
 	helpTextStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))                // Gray for descriptions
 
 	statusStyles = map[session.Status]lipgloss.Style{
-		session.StatusResponding:  lipgloss.NewStyle().Background(lipgloss.Color("10")).Foreground(lipgloss.Color("0")).Bold(true),  // Green bg
-		session.StatusIdle:        lipgloss.NewStyle().Background(lipgloss.Color("240")).Foreground(lipgloss.Color("15")),           // Gray bg
-		session.StatusDone:        lipgloss.NewStyle().Background(lipgloss.Color("12")).Foreground(lipgloss.Color("15")).Bold(true), // Blue bg
-		session.StatusError:       lipgloss.NewStyle().Background(lipgloss.Color("9")).Foreground(lipgloss.Color("15")).Bold(true),  // Red bg
-		session.StatusInterrupted: lipgloss.NewStyle().Background(lipgloss.Color("11")).Foreground(lipgloss.Color("0")).Bold(true),  // Yellow bg
-		session.StatusWaiting:     lipgloss.NewStyle().Background(lipgloss.Color("13")).Foreground(lipgloss.Color("0")).Bold(true),  // Magenta bg
+		session.StatusThinking:    lipgloss.NewStyle().Background(lipgloss.Color("#D4A017")).Foreground(lipgloss.Color("0")).Bold(true),  // Amber bg
+		session.StatusToolUse:     lipgloss.NewStyle().Background(lipgloss.Color("10")).Foreground(lipgloss.Color("0")).Bold(true),      // Green bg
+		session.StatusStreaming:   lipgloss.NewStyle().Background(lipgloss.Color("14")).Foreground(lipgloss.Color("0")).Bold(true),      // Cyan bg
+		session.StatusResponding:  lipgloss.NewStyle().Background(lipgloss.Color("10")).Foreground(lipgloss.Color("0")).Bold(true),      // Green bg (fallback)
+		session.StatusIdle:        lipgloss.NewStyle().Background(lipgloss.Color("240")).Foreground(lipgloss.Color("15")),               // Gray bg
+		session.StatusDone:        lipgloss.NewStyle().Background(lipgloss.Color("12")).Foreground(lipgloss.Color("15")).Bold(true),     // Blue bg
+		session.StatusError:       lipgloss.NewStyle().Background(lipgloss.Color("9")).Foreground(lipgloss.Color("15")).Bold(true),      // Red bg
+		session.StatusInterrupted: lipgloss.NewStyle().Background(lipgloss.Color("11")).Foreground(lipgloss.Color("0")).Bold(true),      // Yellow bg
+		session.StatusWaiting:     lipgloss.NewStyle().Background(lipgloss.Color("13")).Foreground(lipgloss.Color("0")).Bold(true),      // Magenta bg
 	}
 )
 
@@ -426,8 +429,20 @@ func hline(width int) string {
 // Only show the current action when Claude is actively working.
 func actionForStatus(s session.State) string {
 	switch s.Status {
+	case session.StatusThinking:
+		return "Thinking..."
+	case session.StatusToolUse:
+		if s.CurrentAction != "" {
+			return s.CurrentAction
+		}
+		return "Executing tool..."
+	case session.StatusStreaming:
+		return "Streaming response..."
 	case session.StatusResponding:
-		return s.CurrentAction
+		if s.CurrentAction != "" {
+			return s.CurrentAction
+		}
+		return "Processing..."
 	case session.StatusDone:
 		return "Completed"
 	case session.StatusInterrupted:
@@ -441,6 +456,12 @@ func actionForStatus(s session.State) string {
 
 func statusPriority(s session.Status) int {
 	switch s {
+	case session.StatusThinking:
+		return 0
+	case session.StatusToolUse:
+		return 0
+	case session.StatusStreaming:
+		return 0
 	case session.StatusResponding:
 		return 0
 	case session.StatusError:

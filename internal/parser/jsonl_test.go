@@ -247,3 +247,122 @@ func TestReadNewBytes_NoNewData(t *testing.T) {
 		t.Error("offset should not change when no new data")
 	}
 }
+
+func TestReadNewBytes_PartialLine(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.jsonl")
+
+	// Write a complete line followed by a partial line (no trailing newline)
+	complete := `{"type":"user","uuid":"u1","timestamp":"2025-01-01T00:00:00Z","sessionId":"s","message":{}}` + "\n"
+	partial := `{"type":"assistant","uuid":"a1","timestamp":"2025-01-01T`
+	os.WriteFile(path, []byte(complete+partial), 0644)
+
+	records, offset, err := ReadNewBytes(path, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Should only get the complete line — partial line is not committed
+	if len(records) != 1 {
+		t.Fatalf("expected 1 record (partial line deferred), got %d", len(records))
+	}
+	if records[0].Type != "user" {
+		t.Errorf("expected 'user', got %q", records[0].Type)
+	}
+	// Offset should point just past the first newline, not EOF
+	if offset != int64(len(complete)) {
+		t.Errorf("expected offset %d, got %d", len(complete), offset)
+	}
+
+	// Now append the rest of the partial line
+	rest := `00:00:01Z","sessionId":"s","message":{"role":"assistant","content":"hi"}}` + "\n"
+	f, _ := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0644)
+	f.WriteString(rest)
+	f.Close()
+
+	// Second read should pick up the now-complete line
+	records2, _, err := ReadNewBytes(path, offset)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records2) != 1 {
+		t.Fatalf("expected 1 record from completed partial, got %d", len(records2))
+	}
+	if records2[0].Type != "assistant" {
+		t.Errorf("expected 'assistant', got %q", records2[0].Type)
+	}
+}
+
+func TestParseMessageContent_StopReason(t *testing.T) {
+	rec := Record{
+		Type:    "assistant",
+		Message: json.RawMessage(`{"role":"assistant","stop_reason":"tool_use","content":[{"type":"tool_use","name":"Read","input":{}}]}`),
+	}
+	mc, err := ParseMessageContent(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mc.StopReason == nil {
+		t.Fatal("expected non-nil stop_reason")
+	}
+	if *mc.StopReason != "tool_use" {
+		t.Errorf("expected stop_reason 'tool_use', got %q", *mc.StopReason)
+	}
+}
+
+func TestParseMessageContent_StopReasonNull(t *testing.T) {
+	rec := Record{
+		Type:    "assistant",
+		Message: json.RawMessage(`{"role":"assistant","stop_reason":null,"content":[{"type":"thinking","thinking":""}]}`),
+	}
+	mc, err := ParseMessageContent(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// JSON null should result in nil pointer
+	if mc.StopReason != nil {
+		t.Errorf("expected nil stop_reason for null, got %q", *mc.StopReason)
+	}
+}
+
+func TestParseMessageContent_StopReasonAbsent(t *testing.T) {
+	rec := Record{
+		Type:    "assistant",
+		Message: json.RawMessage(`{"role":"assistant","content":[{"type":"text","text":"hi"}]}`),
+	}
+	mc, err := ParseMessageContent(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mc.StopReason != nil {
+		t.Errorf("expected nil stop_reason when absent, got %q", *mc.StopReason)
+	}
+}
+
+func TestRecordSubtype(t *testing.T) {
+	data := []byte(`{"type":"system","subtype":"turn_duration","timestamp":"2025-01-01T00:00:00Z"}`)
+	records := ParseLines(data)
+	if len(records) != 1 {
+		t.Fatalf("expected 1 record, got %d", len(records))
+	}
+	if records[0].Subtype != "turn_duration" {
+		t.Errorf("expected subtype 'turn_duration', got %q", records[0].Subtype)
+	}
+}
+
+func TestIsStatusRelevant(t *testing.T) {
+	relevant := []string{"user", "assistant", "result", "system", "attachment"}
+	for _, typ := range relevant {
+		rec := Record{Type: typ}
+		if !rec.IsStatusRelevant() {
+			t.Errorf("expected %q to be status-relevant", typ)
+		}
+	}
+
+	irrelevant := []string{"file-history-snapshot", "tool_reference", "queue-operation"}
+	for _, typ := range irrelevant {
+		rec := Record{Type: typ}
+		if rec.IsStatusRelevant() {
+			t.Errorf("expected %q to NOT be status-relevant", typ)
+		}
+	}
+}

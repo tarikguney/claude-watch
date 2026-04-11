@@ -17,6 +17,9 @@ import (
 type Status string
 
 const (
+	StatusThinking    Status = "Thinking"
+	StatusToolUse     Status = "Tool Use"
+	StatusStreaming    Status = "Streaming"
 	StatusResponding  Status = "Responding"
 	StatusIdle        Status = "Idle"
 	StatusDone        Status = "Done"
@@ -47,12 +50,15 @@ type State struct {
 
 	// Cached from last record for re-deriving status after PID changes
 	LastRecordType           string
+	LastRecordSubtype        string // e.g. "turn_duration" for system records
 	LastRecordTimestamp      string
 	LastToolResultError      bool
 	LastAssistantIsWorking   bool // true if last assistant record had tool_use or thinking (no text-only)
 	LastIsSystemInjectedUser bool
 	LastHasToolResult        bool
 	LastIsInterrupt          bool
+	LastStopReason           string // "tool_use", "end_turn", "stop_sequence", or "" (null/absent)
+	LastBlockTypes           []string // content block types from the last assistant record
 
 }
 
@@ -75,6 +81,11 @@ func DeriveStatus(rec parser.Record, lastToolResultIsError bool, now time.Time, 
 		return StatusDone
 	}
 
+	// System record with turn_duration subtype means the turn ended — idle.
+	if rec.Type == "system" && rec.Subtype == "turn_duration" {
+		return StatusIdle
+	}
+
 	// Only mark Idle from timestamp age if there's no running process.
 	// A running process means Claude is alive — it just hasn't written to the file recently.
 	if age > idleThreshold && !processRunning {
@@ -86,22 +97,35 @@ func DeriveStatus(rec parser.Record, lastToolResultIsError bool, now time.Time, 
 	}
 
 	switch rec.Type {
-	case "assistant":
-		// Check if Claude is actively working (tool call or thinking)
-		if isAssistantWorking(rec) {
-			return StatusResponding
+	case "attachment":
+		// Attachment records only appear between user prompt and assistant response,
+		// indicating Claude Code is actively loading context before responding.
+		if processRunning {
+			return StatusThinking
 		}
-		// Text-only assistant message — Claude finished and is waiting for input.
 		return StatusIdle
+
+	case "assistant":
+		return deriveAssistantStatus(rec)
 
 	case "user":
 		if rec.IsInterruptRecord() {
 			return StatusInterrupted
 		}
+		// tool_result means a tool just finished and Claude is about to process
+		// the result — this is an active state.
+		if rec.HasToolResult() {
+			return StatusResponding
+		}
 		if rec.IsSystemInjectedUser() {
 			return StatusIdle
 		}
-		// Real user prompt — give Claude a grace period to start processing.
+		// Real user prompt with a running process — Claude is thinking
+		// (the gap between user prompt and first assistant record).
+		if processRunning && age < activeThreshold {
+			return StatusThinking
+		}
+		// Real user prompt without a running process — grace period.
 		if age < activeThreshold {
 			return StatusResponding
 		}
@@ -109,6 +133,105 @@ func DeriveStatus(rec parser.Record, lastToolResultIsError bool, now time.Time, 
 	}
 
 	return StatusIdle
+}
+
+// deriveAssistantStatus determines the fine-grained status for an assistant record
+// using stop_reason and content block types.
+func deriveAssistantStatus(rec parser.Record) Status {
+	mc, err := parser.ParseMessageContent(rec)
+	if err != nil {
+		return StatusResponding // safe fallback
+	}
+	blocks, err := parser.ParseContentBlocks(mc)
+	if err != nil {
+		return StatusResponding
+	}
+
+	stopReason := ""
+	if mc.StopReason != nil {
+		stopReason = *mc.StopReason
+	}
+
+	hasToolUse := false
+	hasThinking := false
+	hasText := false
+	for _, b := range blocks {
+		switch b.Type {
+		case "tool_use":
+			hasToolUse = true
+		case "thinking":
+			hasThinking = true
+		case "text":
+			hasText = true
+		}
+	}
+
+	switch stopReason {
+	case "tool_use":
+		// API call completed and Claude wants to invoke a tool.
+		return StatusToolUse
+	case "end_turn", "stop_sequence":
+		// Claude finished responding — waiting for user input.
+		return StatusIdle
+	case "":
+		// stop_reason is null or absent — Claude is still generating (streaming).
+		if hasToolUse {
+			return StatusToolUse
+		}
+		if hasThinking {
+			return StatusThinking
+		}
+		if hasText {
+			return StatusStreaming
+		}
+		// Fallback for records with no stop_reason and no recognizable blocks
+		// (e.g. older Claude Code versions that didn't log stop_reason).
+		return StatusResponding
+	default:
+		return StatusResponding
+	}
+}
+
+// rederiveAssistantStatus recomputes assistant status from cached fields,
+// used when PID attaches and we need to re-derive without re-parsing the record.
+func rederiveAssistantStatus(stopReason string, blockTypes []string, assistantIsWorking bool) Status {
+	hasToolUse := false
+	hasThinking := false
+	hasText := false
+	for _, bt := range blockTypes {
+		switch bt {
+		case "tool_use":
+			hasToolUse = true
+		case "thinking":
+			hasThinking = true
+		case "text":
+			hasText = true
+		}
+	}
+
+	switch stopReason {
+	case "tool_use":
+		return StatusToolUse
+	case "end_turn", "stop_sequence":
+		return StatusIdle
+	case "":
+		if hasToolUse {
+			return StatusToolUse
+		}
+		if hasThinking {
+			return StatusThinking
+		}
+		if hasText {
+			return StatusStreaming
+		}
+		// Fallback for older records without stop_reason
+		if assistantIsWorking {
+			return StatusResponding
+		}
+		return StatusIdle
+	default:
+		return StatusResponding
+	}
 }
 
 // isAssistantWorking returns true if the assistant record indicates active work
@@ -128,6 +251,35 @@ func isAssistantWorking(rec parser.Record) bool {
 		}
 	}
 	return false
+}
+
+// extractBlockTypes returns the content block types from a record.
+func extractBlockTypes(rec parser.Record) []string {
+	mc, err := parser.ParseMessageContent(rec)
+	if err != nil {
+		return nil
+	}
+	blocks, err := parser.ParseContentBlocks(mc)
+	if err != nil {
+		return nil
+	}
+	types := make([]string, 0, len(blocks))
+	for _, b := range blocks {
+		types = append(types, b.Type)
+	}
+	return types
+}
+
+// extractStopReason returns the stop_reason from a record's message, or "".
+func extractStopReason(rec parser.Record) string {
+	mc, err := parser.ParseMessageContent(rec)
+	if err != nil {
+		return ""
+	}
+	if mc.StopReason != nil {
+		return *mc.StopReason
+	}
+	return ""
 }
 
 // FormatToolAction produces a human-readable one-liner from a tool_use content block.

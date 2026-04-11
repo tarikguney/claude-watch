@@ -101,10 +101,7 @@ func (s *Scanner) LoadSession(path string) error {
 	}
 
 	now := time.Now()
-	var lastRec parser.Record
-	if len(tailRecords) > 0 {
-		lastRec = tailRecords[len(tailRecords)-1]
-	}
+	lastRec := lastStatusRelevantRecord(tailRecords)
 
 	model := ExtractModel(tailRecords)
 	action := ""
@@ -156,12 +153,15 @@ func (s *Scanner) LoadSession(path string) error {
 	state.FileOffset = info.Size()
 	state.FileModTime = info.ModTime()
 	state.LastRecordType = lastRec.Type
+	state.LastRecordSubtype = lastRec.Subtype
 	state.LastRecordTimestamp = lastRec.Timestamp
 	state.LastToolResultError = isError
 	state.LastAssistantIsWorking = lastAssistantWorking
 	state.LastIsSystemInjectedUser = lastIsSystemInjected
 	state.LastHasToolResult = lastHasToolResult
 	state.LastIsInterrupt = lastIsInterrupt
+	state.LastStopReason = extractStopReason(lastRec)
+	state.LastBlockTypes = extractBlockTypes(lastRec)
 	if lastRec.SessionID != "" {
 		state.SessionID = lastRec.SessionID
 	}
@@ -191,7 +191,11 @@ func (s *Scanner) UpdateSession(path string) error {
 	}
 
 	now := time.Now()
-	lastRec := newRecords[len(newRecords)-1]
+	lastRec := lastStatusRelevantRecord(newRecords)
+
+	// If none of the new records are status-relevant (e.g. only attachment or
+	// file-history-snapshot), keep the previous status and just advance the offset.
+	hasRelevant := lastRec.IsStatusRelevant()
 
 	action := ""
 	for i := len(newRecords) - 1; i >= 0; i-- {
@@ -209,7 +213,13 @@ func (s *Scanner) UpdateSession(path string) error {
 	lastResponse := ExtractLastResponse(newRecords)
 	isError := CheckLastToolResultError(newRecords)
 	lastAssistantWorking := isAssistantWorking(lastRec)
-	status := DeriveStatus(lastRec, isError, now, state.PID > 0)
+
+	var status Status
+	if hasRelevant {
+		status = DeriveStatus(lastRec, isError, now, state.PID > 0)
+	} else {
+		status = state.Status // preserve previous status
+	}
 
 	newCwd := ""
 	for _, rec := range newRecords {
@@ -224,13 +234,20 @@ func (s *Scanner) UpdateSession(path string) error {
 	state.LastUpdate = now
 	state.FileModTime = now
 	state.Status = status
-	state.LastRecordType = lastRec.Type
-	state.LastRecordTimestamp = lastRec.Timestamp
-	state.LastToolResultError = isError
-	state.LastAssistantIsWorking = lastAssistantWorking
-	state.LastIsSystemInjectedUser = lastRec.IsSystemInjectedUser()
-	state.LastHasToolResult = lastRec.HasToolResult()
-	state.LastIsInterrupt = lastRec.IsInterruptRecord()
+	// Only update cached record metadata when we have a meaningful record.
+	// Otherwise preserve the previous state for re-derivation.
+	if hasRelevant {
+		state.LastRecordType = lastRec.Type
+		state.LastRecordSubtype = lastRec.Subtype
+		state.LastRecordTimestamp = lastRec.Timestamp
+		state.LastToolResultError = isError
+		state.LastAssistantIsWorking = lastAssistantWorking
+		state.LastIsSystemInjectedUser = lastRec.IsSystemInjectedUser()
+		state.LastHasToolResult = lastRec.HasToolResult()
+		state.LastIsInterrupt = lastRec.IsInterruptRecord()
+		state.LastStopReason = extractStopReason(lastRec)
+		state.LastBlockTypes = extractBlockTypes(lastRec)
+	}
 	if action != "" {
 		state.CurrentAction = action
 	}
@@ -486,23 +503,29 @@ func (s *Scanner) MatchProcesses(procs []process.Info, paneMap map[int]tmux.Pane
 			state.Status = StatusError
 			continue
 		}
+		// System turn_duration means the turn ended.
+		if state.LastRecordType == "system" && state.LastRecordSubtype == "turn_duration" {
+			state.Status = StatusIdle
+			continue
+		}
 		switch state.LastRecordType {
+		case "attachment":
+			// Attachment only appears before assistant response — active.
+			state.Status = StatusThinking
 		case "assistant":
-			if state.LastAssistantIsWorking {
-				state.Status = StatusResponding
-			} else {
-				state.Status = StatusIdle
-			}
+			state.Status = rederiveAssistantStatus(state.LastStopReason, state.LastBlockTypes, state.LastAssistantIsWorking)
 		case "user":
 			if state.LastIsInterrupt {
 				state.Status = StatusInterrupted
+			} else if state.LastHasToolResult {
+				state.Status = StatusResponding
 			} else if state.LastIsSystemInjectedUser {
 				state.Status = StatusIdle
 			} else {
-				// Real user prompt — respect the activeThreshold grace period
+				// Real user prompt with running process — Claude is thinking.
 				recTime, err := time.Parse(time.RFC3339Nano, state.LastRecordTimestamp)
 				if err == nil && time.Since(recTime) < activeThreshold {
-					state.Status = StatusResponding
+					state.Status = StatusThinking
 				} else {
 					state.Status = StatusIdle
 				}
@@ -553,5 +576,20 @@ func extractCwd(records []parser.Record) string {
 		}
 	}
 	return ""
+}
+
+// lastStatusRelevantRecord returns the last record whose type is meaningful
+// for status derivation, skipping metadata records like attachment and
+// file-history-snapshot. Falls back to the very last record if none qualify.
+func lastStatusRelevantRecord(records []parser.Record) parser.Record {
+	for i := len(records) - 1; i >= 0; i-- {
+		if records[i].IsStatusRelevant() {
+			return records[i]
+		}
+	}
+	if len(records) > 0 {
+		return records[len(records)-1]
+	}
+	return parser.Record{}
 }
 
