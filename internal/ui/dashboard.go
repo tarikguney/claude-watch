@@ -245,7 +245,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						hint = fmt.Sprintf("Ctrl+B, s → select \"%s\" → window \"%s\"", parts[0], parts[1])
 					}
 					m.statusMsg = fmt.Sprintf("Go to: %s  |  %s", s.TmuxSession, hint)
-					m.statusExp = time.Now().Add(10 * time.Second)
+					m.statusExp = time.Now().Add(5 * time.Second)
 				}
 			}
 		case "q", "Q", "ctrl+c":
@@ -329,20 +329,21 @@ func (m Model) View() string {
 		b.WriteString(durationStyle.Render("  No active sessions found. Watching for new sessions...") + "\n")
 	}
 
-	// Help bar
+	// Help bar or status message (mutually exclusive to keep line count stable)
 	if !m.compact {
 		b.WriteString("\n" + hline(tw) + "\n")
-		b.WriteString(
-			helpKeyStyle.Render("↑↓") + helpTextStyle.Render(" Navigate  ") +
-				helpKeyStyle.Render("Enter") + helpTextStyle.Render(" Toggle  ") +
-				helpKeyStyle.Render("g") + helpTextStyle.Render(" Go to Window  ") +
-				helpKeyStyle.Render("e") + helpTextStyle.Render(" Expand All  ") +
-				helpKeyStyle.Render("c") + helpTextStyle.Render(" Collapse All  ") +
-				helpKeyStyle.Render("q") + helpTextStyle.Render(" Quit"),
-		)
 		if m.statusMsg != "" && time.Now().Before(m.statusExp) {
 			warnStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("11")) // yellow
-			b.WriteString("\n" + warnStyle.Render("  "+m.statusMsg))
+			b.WriteString(warnStyle.Render("  "+m.statusMsg))
+		} else {
+			b.WriteString(
+				helpKeyStyle.Render("↑↓") + helpTextStyle.Render(" Navigate  ") +
+					helpKeyStyle.Render("Enter") + helpTextStyle.Render(" Toggle  ") +
+					helpKeyStyle.Render("g") + helpTextStyle.Render(" Go to Window  ") +
+					helpKeyStyle.Render("e") + helpTextStyle.Render(" Expand All  ") +
+					helpKeyStyle.Render("c") + helpTextStyle.Render(" Collapse All  ") +
+					helpKeyStyle.Render("q") + helpTextStyle.Render(" Quit"),
+			)
 		}
 	}
 
