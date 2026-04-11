@@ -236,10 +236,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.statusMsg = "Session not in tmux"
 					m.statusExp = time.Now().Add(3 * time.Second)
 				} else {
-					if err := tmux.SwitchToPane(s.TmuxSession); err != nil {
-						m.statusMsg = fmt.Sprintf("Switch failed: %v", err)
-						m.statusExp = time.Now().Add(3 * time.Second)
+					// Attempt switch-client (works in tmux, no-op in psmux 3.3.2)
+					tmux.SwitchToPane(s.TmuxSession)
+					// Show navigation hint — needed for psmux where switch-client is broken
+					parts := strings.SplitN(s.TmuxSession, "/", 2)
+					hint := "Ctrl+B, s"
+					if len(parts) == 2 {
+						hint = fmt.Sprintf("Ctrl+B, s → select \"%s\" → window \"%s\"", parts[0], parts[1])
 					}
+					m.statusMsg = fmt.Sprintf("Go to: %s  |  %s", s.TmuxSession, hint)
+					m.statusExp = time.Now().Add(10 * time.Second)
 				}
 			}
 		case "q", "Q", "ctrl+c":
@@ -329,7 +335,7 @@ func (m Model) View() string {
 		b.WriteString(
 			helpKeyStyle.Render("↑↓") + helpTextStyle.Render(" Navigate  ") +
 				helpKeyStyle.Render("Enter") + helpTextStyle.Render(" Toggle  ") +
-				helpKeyStyle.Render("g") + helpTextStyle.Render(" Go to Pane  ") +
+				helpKeyStyle.Render("g") + helpTextStyle.Render(" Go to Window  ") +
 				helpKeyStyle.Render("e") + helpTextStyle.Render(" Expand All  ") +
 				helpKeyStyle.Render("c") + helpTextStyle.Render(" Collapse All  ") +
 				helpKeyStyle.Render("q") + helpTextStyle.Render(" Quit"),

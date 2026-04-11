@@ -117,8 +117,10 @@ func Resolve(paneMap map[int]PaneInfo, parentPIDs []int) (string, string) {
 	return "", ""
 }
 
-// SwitchToPane switches the current tmux client to the given session and window.
-// target should be in "session/window" format (as stored in State.TmuxSession).
+// SwitchToPane attempts to switch the current tmux/psmux client to the given
+// session and window. target should be in "session/window" format.
+// Note: switch-client is non-functional in psmux 3.3.2 (see psmux/psmux#202).
+// The call is kept as a best-effort attempt for future psmux versions and real tmux.
 func SwitchToPane(target string) error {
 	bin := tmuxBin()
 	if bin == "" {
