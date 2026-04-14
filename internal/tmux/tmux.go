@@ -6,6 +6,7 @@ package tmux
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -20,7 +21,11 @@ type PaneInfo struct {
 }
 
 // tmuxBin returns the first available tmux-compatible binary, or "" if none found.
+// Set CLAUDE_WATCH_TMUX_BIN to override (e.g. for a custom build or alternate path).
 func tmuxBin() string {
+	if bin := os.Getenv("CLAUDE_WATCH_TMUX_BIN"); bin != "" {
+		return bin
+	}
 	for _, name := range []string{"psmux", "tmux", "pmux"} {
 		if p, err := exec.LookPath(name); err == nil && p != "" {
 			return name
@@ -36,7 +41,7 @@ func Available() bool {
 
 // ListPanes queries all panes across all tmux/psmux sessions.
 // Returns a map from pane PID to PaneInfo.
-// Works around psmux's broken `list-panes -a` by iterating sessions.
+// Iterates sessions individually for broad compatibility (psmux, tmux, pmux).
 func ListPanes() map[int]PaneInfo {
 	bin := tmuxBin()
 	if bin == "" {
@@ -118,18 +123,66 @@ func Resolve(paneMap map[int]PaneInfo, parentPIDs []int) (string, string) {
 }
 
 // SwitchToPane attempts to switch the current tmux/psmux client to the given
-// session and window. target should be in "session/window" format.
-// Note: switch-client is non-functional in psmux 3.3.2 (see psmux/psmux#202).
-// The call is kept as a best-effort attempt for future psmux versions and real tmux.
-func SwitchToPane(target string) error {
+// session, window, and optionally pane. target should be in "session/window"
+// format; paneID is the tmux pane unique ID (e.g. "%5") for precise targeting.
+//
+// For psmux: switch-client operates at the session level, so we first switch
+// sessions, then select the window and pane separately. PSMUX_SESSION_NAME must
+// be set so psmux knows which server to contact for cross-session commands.
+func SwitchToPane(target string, paneID string) error {
 	bin := tmuxBin()
 	if bin == "" {
 		return fmt.Errorf("no tmux binary available")
 	}
-	// Convert "session/window" to "session:window" for tmux target syntax
-	tmuxTarget := strings.Replace(target, "/", ":", 1)
-	if out, err := exec.Command(bin, "switch-client", "-t", tmuxTarget).CombinedOutput(); err != nil {
-		return fmt.Errorf("%s", strings.TrimSpace(string(out)))
+
+	// Parse "session/window" into session and window components
+	parts := strings.SplitN(target, "/", 2)
+	targetSession := parts[0]
+	targetWindow := ""
+	if len(parts) == 2 {
+		targetWindow = parts[1]
 	}
+
+	// 1. Switch to the target session.
+	// For psmux, pass just the session name (it strips :window anyway).
+	// PSMUX_SESSION_NAME from the environment tells psmux which server to contact.
+	cmd := exec.Command(bin, "switch-client", "-t", targetSession)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("switch-client: %s", strings.TrimSpace(string(out)))
+	}
+
+	// 2. Select the window in the target session.
+	// For psmux, set PSMUX_SESSION_NAME to the target so we talk to the right server.
+	if targetWindow != "" {
+		wCmd := exec.Command(bin, "select-window", "-t", targetSession+":"+targetWindow)
+		wCmd.Env = envWithSession(targetSession)
+		_ = wCmd.Run()
+	}
+
+	// 3. Select the specific pane if we have a pane ID
+	if paneID != "" {
+		pCmd := exec.Command(bin, "select-pane", "-t", paneID)
+		pCmd.Env = envWithSession(targetSession)
+		_ = pCmd.Run()
+	}
+
 	return nil
+}
+
+// envWithSession returns a copy of os.Environ with PSMUX_SESSION_NAME set to
+// the given session name. This tells psmux which server to route the command to.
+func envWithSession(session string) []string {
+	env := os.Environ()
+	found := false
+	for i, e := range env {
+		if strings.HasPrefix(e, "PSMUX_SESSION_NAME=") {
+			env[i] = "PSMUX_SESSION_NAME=" + session
+			found = true
+			break
+		}
+	}
+	if !found {
+		env = append(env, "PSMUX_SESSION_NAME="+session)
+	}
+	return env
 }

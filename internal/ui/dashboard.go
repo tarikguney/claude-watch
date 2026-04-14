@@ -235,10 +235,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if s.TmuxSession == "" {
 					m.statusMsg = "Session not in tmux"
 					m.statusExp = time.Now().Add(3 * time.Second)
+				} else if err := tmux.SwitchToPane(s.TmuxSession, s.TmuxPaneID); err == nil {
+					m.statusMsg = fmt.Sprintf("Switched to %s", s.TmuxSession)
+					m.statusExp = time.Now().Add(3 * time.Second)
 				} else {
-					// Attempt switch-client (works in tmux, no-op in psmux 3.3.2)
-					tmux.SwitchToPane(s.TmuxSession)
-					// Show navigation hint — needed for psmux where switch-client is broken
+					// Programmatic switch failed — show manual navigation hint
 					parts := strings.SplitN(s.TmuxSession, "/", 2)
 					hint := "Ctrl+B, s"
 					if len(parts) == 2 {
