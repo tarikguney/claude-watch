@@ -80,34 +80,63 @@ func listSessions(bin string) []string {
 }
 
 // listSessionPanes returns pane info for all panes in a given session.
+// Iterates windows individually because psmux's list-panes -s flag only
+// returns panes from one window when -F is used (psmux/psmux#218).
 func listSessionPanes(bin, sessionName string) []PaneInfo {
-	out, err := exec.Command(bin, "list-panes", "-s", "-t", sessionName,
-		"-F", "#{pane_pid} #{pane_id} #{session_name} #{window_name}").Output()
-	if err != nil {
+	windows := listSessionWindows(bin, sessionName)
+	if len(windows) == 0 {
 		return nil
 	}
 	var panes []PaneInfo
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		parts := strings.SplitN(line, " ", 4)
-		if len(parts) < 4 {
-			continue
-		}
-		pid, err := strconv.Atoi(parts[0])
+	for _, winIdx := range windows {
+		target := sessionName + ":" + winIdx
+		cmd := exec.Command(bin, "list-panes", "-t", target,
+			"-F", "#{pane_pid} #{pane_id} #{session_name} #{window_name}")
+		cmd.Env = envWithSession(sessionName)
+		out, err := cmd.Output()
 		if err != nil {
 			continue
 		}
-		panes = append(panes, PaneInfo{
-			PanePID:     pid,
-			PaneID:      parts[1],
-			SessionName: parts[2],
-			WindowName:  parts[3],
-		})
+		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			parts := strings.SplitN(line, " ", 4)
+			if len(parts) < 4 {
+				continue
+			}
+			pid, err := strconv.Atoi(parts[0])
+			if err != nil {
+				continue
+			}
+			panes = append(panes, PaneInfo{
+				PanePID:     pid,
+				PaneID:      parts[1],
+				SessionName: parts[2],
+				WindowName:  parts[3],
+			})
+		}
 	}
 	return panes
+}
+
+// listSessionWindows returns the window indices for a given session.
+func listSessionWindows(bin, sessionName string) []string {
+	cmd := exec.Command(bin, "list-windows", "-t", sessionName, "-F", "#{window_index}")
+	cmd.Env = envWithSession(sessionName)
+	out, err := cmd.Output()
+	if err != nil {
+		return nil
+	}
+	var windows []string
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			windows = append(windows, line)
+		}
+	}
+	return windows
 }
 
 // Resolve finds the tmux session/window for a process by walking its parent
