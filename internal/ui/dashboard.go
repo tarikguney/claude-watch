@@ -54,10 +54,24 @@ type cols struct {
 	dur     int
 }
 
-// computeCols calculates column widths from actual session data,
-// then expands the ACTION column to fill the terminal width.
+// Column caps so one very long value can't starve the action column.
+// Content longer than the cap is truncated with "…" at render time.
+const (
+	tmuxColCap    = 30
+	projectColCap = 30
+)
+
+// computeCols calculates column widths that fit the terminal on one line.
+// PID, STATUS, DURATION are small and content-sized; TMUX and PROJECT are
+// content-sized up to a cap; ACTION absorbs whatever space is left. If the
+// terminal is too narrow to give ACTION its minimum, TMUX shrinks first,
+// then PROJECT. Cell contents are truncated to these widths at render time
+// so rows never wrap.
 func computeCols(sessions []session.State, now time.Time, termW int) cols {
-	// Check if any session has tmux info
+	if termW <= 0 {
+		termW = 120
+	}
+
 	hasTmux := false
 	for _, s := range sessions {
 		if s.TmuxSession != "" {
@@ -66,29 +80,24 @@ func computeCols(sessions []session.State, now time.Time, termW int) cols {
 		}
 	}
 
-	// Start with minimum widths based on header text + padding
 	c := cols{
-		pid:     len("PID") + 2,
-		tmux:    0, // hidden unless tmux data exists
-		project: len("PROJECT") + 2,
-		status:  len("Interrupted") + 2, // fixed width — widest possible status
-		action:  len("CURRENT ACTION") + 2,
-		dur:     len("DURATION") + 2,
+		pid:    len("PID") + 2,
+		status: len("Interrupted") + 2, // widest possible status
+		dur:    len("DURATION") + 2,
 	}
-
+	idealProject := len("PROJECT") + 2
+	idealTmux := 0
 	if hasTmux {
-		c.tmux = len("TMUX SESSION/WINDOW") + 2
+		idealTmux = len("TMUX SESSION/WINDOW") + 2
 	}
 
-	// Expand to fit content
 	for _, s := range sessions {
-		if w := len(s.ProjectName) + 2; w > c.project {
-			c.project = w
+		pidStr := ""
+		if s.PID > 0 {
+			pidStr = fmt.Sprintf("%d", s.PID)
 		}
-		if hasTmux {
-			if w := len(s.TmuxSession) + 2; w > c.tmux {
-				c.tmux = w
-			}
+		if w := len(pidStr) + 2; w > c.pid {
+			c.pid = w
 		}
 		dur := ""
 		if !s.StartTime.IsZero() {
@@ -97,53 +106,83 @@ func computeCols(sessions []session.State, now time.Time, termW int) cols {
 		if w := len(dur) + 2; w > c.dur {
 			c.dur = w
 		}
-		pidStr := ""
-		if s.PID > 0 {
-			pidStr = fmt.Sprintf("%d", s.PID)
+		if hasTmux {
+			if w := len(s.TmuxSession) + 2; w > idealTmux {
+				idealTmux = w
+			}
 		}
-		if w := len(pidStr) + 2; w > c.pid {
-			c.pid = w
+		if w := len(s.ProjectName) + 2; w > idealProject {
+			idealProject = w
 		}
 	}
 
-	if termW <= 0 {
-		termW = 120
+	if idealTmux > tmuxColCap {
+		idealTmux = tmuxColCap
 	}
-	numSep := 4 // PID, PROJECT, STATUS, DURATION boundaries
+	if idealProject > projectColCap {
+		idealProject = projectColCap
+	}
+
+	numSep := 4
 	if hasTmux {
-		numSep = 5 // + SESSION boundary
+		numSep = 5
 	}
-	separators := numSep * 3 // " │ " = 3 chars each
-	minAction := len("CURRENT ACTION") + 2
+	separators := numSep * 3
 
-	// Shrink flexible columns (tmux, project) until action fits
-	for {
-		fixed := c.pid + c.tmux + c.project + c.status + c.dur + separators
-		remaining := termW - fixed
-		if remaining >= minAction {
-			c.action = remaining
-			break
-		}
-		// Shrink the wider of tmux/project first
+	avail := termW - c.pid - c.status - c.dur - separators
+	minAction := len("CURRENT ACTION") + 2
+	minTmux := 0
+	if hasTmux {
+		minTmux = len("TMUX") + 2
+	}
+	minProject := len("PROJ") + 2
+
+	c.tmux = idealTmux
+	c.project = idealProject
+	c.action = avail - c.tmux - c.project
+
+	// If action is starved, steal space from tmux first, then project.
+	for c.action < minAction {
 		shrunk := false
-		if c.tmux > len("TMUX")+2 {
+		if c.tmux > minTmux {
 			c.tmux--
+			c.action++
 			shrunk = true
 		}
-		if remaining < minAction && c.project > len("PROJECT")+2 {
+		if c.action < minAction && c.project > minProject {
 			c.project--
+			c.action++
 			shrunk = true
 		}
 		if !shrunk {
-			// Can't shrink further — give action whatever is left
-			if remaining > 0 {
-				c.action = remaining
-			}
-			break
+			break // terminal too narrow; accept slight overflow
 		}
 	}
 
 	return c
+}
+
+// truncate cuts s to fit in maxWidth rune cells, appending "…" when cut.
+// Newlines are flattened to spaces so a cell never spans multiple rows.
+// Width is approximated by rune count (accurate for ASCII; acceptable for
+// CJK/emoji which mostly don't appear in tmux/project/action strings).
+func truncate(s string, maxWidth int) string {
+	if maxWidth <= 0 {
+		return ""
+	}
+	if strings.ContainsAny(s, "\r\n") {
+		s = strings.ReplaceAll(s, "\r\n", " ")
+		s = strings.ReplaceAll(s, "\n", " ")
+		s = strings.ReplaceAll(s, "\r", " ")
+	}
+	runes := []rune(s)
+	if len(runes) <= maxWidth {
+		return s
+	}
+	if maxWidth == 1 {
+		return "…"
+	}
+	return string(runes[:maxWidth-1]) + "…"
 }
 
 type tickMsg time.Time
@@ -269,16 +308,16 @@ func (m Model) View() string {
 
 	widths := []int{c.pid, c.project, c.status, c.action, c.dur}
 	headers := []string{
-		colHeaderStyle.Width(c.pid).Render("PID"),
-		colHeaderStyle.Width(c.project).Render("PROJECT"),
-		colHeaderStyle.Width(c.status).Render("STATUS"),
-		colHeaderStyle.Width(c.action).Render("CURRENT ACTION"),
-		colHeaderStyle.Width(c.dur).Render("DURATION"),
+		colHeaderStyle.Width(c.pid).Render(truncate("PID", c.pid)),
+		colHeaderStyle.Width(c.project).Render(truncate("PROJECT", c.project)),
+		colHeaderStyle.Width(c.status).Render(truncate("STATUS", c.status)),
+		colHeaderStyle.Width(c.action).Render(truncate("CURRENT ACTION", c.action)),
+		colHeaderStyle.Width(c.dur).Render(truncate("DURATION", c.dur)),
 	}
 	if c.tmux > 0 {
 		widths = append(widths[:1], append([]int{c.tmux}, widths[1:]...)...)
 		headers = append(headers[:1], append([]string{
-			colHeaderStyle.Width(c.tmux).Render("TMUX SESSION/WINDOW"),
+			colHeaderStyle.Width(c.tmux).Render(truncate("TMUX SESSION/WINDOW", c.tmux)),
 		}, headers[1:]...)...)
 	}
 	tw := totalWidth(widths)
@@ -299,24 +338,18 @@ func (m Model) View() string {
 			}
 			if prompt != "" {
 				prefix := "  » prompt: "
-				maxLen := m.termW - len(prefix)
-				if maxLen < 1 {
-					maxLen = 1
-				}
+				maxLen := max(1, m.termW-len(prefix))
 				b.WriteString(
 					durationStyle.Render(prefix) +
-						promptStyle.MaxWidth(maxLen).Render(prompt) + "\n",
+						promptStyle.Render(truncate(prompt, maxLen)) + "\n",
 				)
 			}
 			if s.LastResponse != "" {
 				prefix := "  » response: "
-				maxLen := m.termW - len(prefix)
-				if maxLen < 1 {
-					maxLen = 1
-				}
+				maxLen := max(1, m.termW-len(prefix))
 				b.WriteString(
 					durationStyle.Render(prefix) +
-						responseStyle.MaxWidth(maxLen).Render(s.LastResponse) + "\n",
+						responseStyle.Render(truncate(s.LastResponse, maxLen)) + "\n",
 				)
 			}
 		}
@@ -381,25 +414,26 @@ func renderRow(s session.State, now time.Time, c cols, isCursor bool) string {
 	// Cursor indicator occupies 2 chars (">" + " "); remaining width goes to PID value.
 	var pidCell string
 	if isCursor {
-		pidCell = cursorStyle.Render(">") + " " + pidStyle.Width(c.pid-2).Render(pidStr)
+		pidW := max(1, c.pid-2)
+		pidCell = cursorStyle.Render(">") + " " + pidStyle.Width(pidW).Render(truncate(pidStr, pidW))
 	} else {
-		pidCell = pidStyle.Width(c.pid).Render(pidStr)
+		pidCell = pidStyle.Width(c.pid).Render(truncate(pidStr, c.pid))
 	}
 
 	cells := []string{
 		pidCell,
-		projectStyle.Width(c.project).MaxWidth(c.project).Render(s.ProjectName),
+		projectStyle.Width(c.project).Render(truncate(s.ProjectName, c.project)),
 		styledStatus(s.Status, c.status),
-		actionStyle.Width(c.action).MaxWidth(c.action).Render(action),
-		durationStyle.Width(c.dur).MaxWidth(c.dur).Render(dur),
+		actionStyle.Width(c.action).Render(truncate(action, c.action)),
+		durationStyle.Width(c.dur).Render(truncate(dur, c.dur)),
 	}
 
 	if c.tmux > 0 {
 		var tmuxCell string
 		if s.TmuxSession == "" {
-			tmuxCell = durationStyle.Width(c.tmux).MaxWidth(c.tmux).Render("not in tmux")
+			tmuxCell = durationStyle.Width(c.tmux).Render(truncate("not in tmux", c.tmux))
 		} else {
-			tmuxCell = tmuxStyle.Width(c.tmux).MaxWidth(c.tmux).Render(s.TmuxSession)
+			tmuxCell = tmuxStyle.Width(c.tmux).Render(truncate(s.TmuxSession, c.tmux))
 		}
 		cells = append(cells[:1], append([]string{tmuxCell}, cells[1:]...)...)
 	}
@@ -412,7 +446,7 @@ func styledStatus(status session.Status, width int) string {
 	if !ok {
 		style = lipgloss.NewStyle()
 	}
-	return style.Width(width).Render(string(status))
+	return style.Width(width).Render(truncate(string(status), width))
 }
 
 func joinCols(cells []string) string {

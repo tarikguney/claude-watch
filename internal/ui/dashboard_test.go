@@ -136,6 +136,81 @@ func TestRender_SortOrder(t *testing.T) {
 	}
 }
 
+// TestRenderRow_NeverWraps guards against the "long value pushes a column onto
+// a second line" regression. No matter how long the tmux session, project, or
+// action text is — and no matter how narrow the terminal — a rendered row must
+// be exactly one physical line.
+func TestRenderRow_NeverWraps(t *testing.T) {
+	now := time.Now()
+	sessions := []session.State{
+		{
+			PID:           12345,
+			ProjectName:   "sync_calling_concore-commoninfra-very-long-name",
+			TmuxSession:   "common-infra/client-enrichment-potential-bug-with-extra-suffix",
+			TmuxPaneID:    "%1",
+			CurrentAction: "SHARE_FILE=$(mktemp /tmp/copilot-session-$$)\nand a second line that must be flattened",
+			Status:        session.StatusToolUse,
+			StartTime:     now.Add(-20 * time.Minute),
+			LastUpdate:    now,
+		},
+	}
+
+	// Exercise a range of terminal widths: narrow, typical, wide.
+	for _, termW := range []int{60, 80, 100, 140, 200} {
+		c := computeCols(sessions, now, termW)
+		row := renderRow(sessions[0], now, c, false)
+		if strings.Contains(row, "\n") {
+			t.Errorf("termW=%d: row contains newline; must be a single line. got:\n%q", termW, row)
+		}
+	}
+}
+
+func TestTruncate(t *testing.T) {
+	tests := []struct {
+		in    string
+		width int
+		want  string
+	}{
+		{"hello", 10, "hello"},
+		{"hello world", 5, "hell…"},
+		{"", 5, ""},
+		{"x", 0, ""},
+		{"abcdef", 1, "…"},
+		{"line1\nline2", 20, "line1 line2"},
+		{"a\r\nb", 20, "a b"},
+		{"long enough to cut\nwith newline", 10, "long enou…"},
+	}
+	for _, tt := range tests {
+		got := truncate(tt.in, tt.width)
+		if got != tt.want {
+			t.Errorf("truncate(%q, %d) = %q, want %q", tt.in, tt.width, got, tt.want)
+		}
+	}
+}
+
+func TestComputeCols_CapsFlexColumns(t *testing.T) {
+	now := time.Now()
+	sessions := []session.State{
+		{
+			PID:         100,
+			ProjectName: strings.Repeat("p", 80),
+			TmuxSession: strings.Repeat("t", 80),
+			StartTime:   now.Add(-5 * time.Minute),
+			LastUpdate:  now,
+		},
+	}
+	c := computeCols(sessions, now, 200)
+	if c.tmux > tmuxColCap {
+		t.Errorf("tmux column should be capped at %d, got %d", tmuxColCap, c.tmux)
+	}
+	if c.project > projectColCap {
+		t.Errorf("project column should be capped at %d, got %d", projectColCap, c.project)
+	}
+	if c.action < len("CURRENT ACTION")+2 {
+		t.Errorf("action column should get remaining space, got %d", c.action)
+	}
+}
+
 func TestStatusPriority(t *testing.T) {
 	if statusPriority(session.StatusResponding) >= statusPriority(session.StatusError) {
 		t.Error("Responding should have higher priority than Error")
