@@ -433,8 +433,14 @@ func (s *Scanner) MatchProcesses(procs []process.Info, paneMap map[int]tmux.Pane
 			delete(s.sessions, "placeholder:"+proc.SessionID)
 			st := s.sessions[bestPath]
 			st.PID = proc.PID
-			st.TmuxSession = tmuxSession
-			st.TmuxPaneID = tmuxPaneID
+			// Preserve the last known tmux info when resolution transiently fails
+			// (e.g. a single psmux list-panes call errors, or the Windows PID-chain
+			// snapshot misses the pane PID for one tick). Overwriting with empty
+			// would briefly render "not in tmux" until the next 2s poll recovers.
+			if tmuxSession != "" {
+				st.TmuxSession = tmuxSession
+				st.TmuxPaneID = tmuxPaneID
+			}
 			if st.StartTime.IsZero() && !proc.StartTime.IsZero() {
 				st.StartTime = proc.StartTime
 			}
