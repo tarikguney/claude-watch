@@ -38,24 +38,42 @@ func listWindows() ([]Info, error) {
 	if err != nil {
 		return nil, fmt.Errorf("powershell process query failed: %w", err)
 	}
-	return parsePipedLines(string(out))
+	return parsePipedLinesWithCache(string(out), buildParentPIDMap())
 }
 
 func listUnix() ([]Info, error) {
 	// Use ps with a specific format. lstart gives a fixed-width date like:
 	//   "Sun Apr  6 10:53:38 2026"
 	// which is always 24 characters. The format is: pid (right-aligned), ppid, lstart (24 chars), command.
-	//
-	// We filter to only claude processes using grep to avoid parsing every process.
-	// Two-stage: first get all processes, then filter.
 	cmd := exec.Command("ps", "axo", "pid=,ppid=,lstart=,command=")
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("ps command failed: %w", err)
 	}
 
+	// First pass: build a pid->ppid map from every process (needed to walk
+	// ancestors beyond the immediate parent without re-querying /proc).
+	lines := strings.Split(string(out), "\n")
+	cache := make(map[int]int, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		pid, err := strconv.Atoi(fields[0])
+		if err != nil {
+			continue
+		}
+		ppid, _ := strconv.Atoi(fields[1])
+		cache[pid] = ppid
+	}
+
 	var results []Info
-	for _, line := range strings.Split(string(out), "\n") {
+	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
@@ -72,7 +90,7 @@ func listUnix() ([]Info, error) {
 			continue
 		}
 
-		info := parseUnixLine(line)
+		info := parseUnixLineWithCache(line, cache)
 		if info.SessionID != "" && info.PID > 0 {
 			results = append(results, info)
 		}
@@ -82,6 +100,12 @@ func listUnix() ([]Info, error) {
 
 // parsePipedLines parses Windows PowerShell output in "PID|PPID|StartTime|CommandLine" format.
 func parsePipedLines(output string) ([]Info, error) {
+	return parsePipedLinesWithCache(output, nil)
+}
+
+// parsePipedLinesWithCache is like parsePipedLines but uses a prebuilt
+// pid->ppid map for ancestor walks. Pass nil to fall back to per-call lookup.
+func parsePipedLinesWithCache(output string, cache map[int]int) ([]Info, error) {
 	var results []Info
 	for _, line := range strings.Split(output, "\n") {
 		line = strings.TrimSpace(line)
@@ -109,7 +133,7 @@ func parsePipedLines(output string) ([]Info, error) {
 		}
 
 		cwd, _ := GetProcessCwd(pid)
-		parentPIDs := walkParentPIDs(ppid, 6)
+		parentPIDs := walkParentPIDs(ppid, 6, cache)
 		results = append(results, Info{
 			PID:        pid,
 			SessionID:  sessionID,
@@ -125,6 +149,12 @@ func parsePipedLines(output string) ([]Info, error) {
 // Format: "  12345  6789 Sun Apr  6 10:53:38 2026 /path/to/claude --session-id ..."
 // The lstart field is always 24 characters wide.
 func parseUnixLine(line string) Info {
+	return parseUnixLineWithCache(line, nil)
+}
+
+// parseUnixLineWithCache is like parseUnixLine but uses a prebuilt pid->ppid
+// map for ancestor walks. Pass nil to fall back to per-call /proc reads.
+func parseUnixLineWithCache(line string, cache map[int]int) Info {
 	fields := strings.Fields(line)
 	if len(fields) < 3 {
 		return Info{}
@@ -162,7 +192,7 @@ func parseUnixLine(line string) Info {
 
 	sessionID := extractFlag(sessionIDRe, cmdLine)
 	cwd, _ := GetProcessCwd(pid)
-	parentPIDs := walkParentPIDs(ppid, 6)
+	parentPIDs := walkParentPIDs(ppid, 6, cache)
 
 	return Info{
 		PID:        pid,
@@ -182,14 +212,22 @@ func extractFlag(re *regexp.Regexp, cmdLine string) string {
 }
 
 // walkParentPIDs collects ancestor PIDs starting from ppid, walking up to maxDepth levels.
-func walkParentPIDs(ppid int, maxDepth int) []int {
+// If cache is non-nil, ancestor lookups come from the map; otherwise each level
+// calls getParentPID (which may be expensive, e.g. a full process-table snapshot
+// on Windows).
+func walkParentPIDs(ppid int, maxDepth int, cache map[int]int) []int {
 	if ppid <= 0 {
 		return nil
 	}
 	pids := []int{ppid}
 	current := ppid
 	for i := 1; i < maxDepth; i++ {
-		parent := getParentPID(current)
+		var parent int
+		if cache != nil {
+			parent = cache[current]
+		} else {
+			parent = getParentPID(current)
+		}
 		if parent <= 0 || parent == current {
 			break
 		}

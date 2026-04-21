@@ -6,6 +6,8 @@ package main
 
 import (
 	"fmt"
+	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -31,7 +33,6 @@ func main() {
 	var refresh time.Duration
 	var claudeDir string
 	var compact bool
-	var maxAge time.Duration
 
 	rootCmd := &cobra.Command{
 		Use:     "claude-watch",
@@ -42,21 +43,26 @@ Discovers sessions automatically from ~/.claude/projects/.
 
 Source: https://github.com/tarikguney/claude-watch`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return run(claudeDir, refresh, compact, maxAge)
+			return run(claudeDir, refresh, compact)
 		},
 	}
 
 	rootCmd.Flags().DurationVar(&refresh, "refresh", 1*time.Second, "Dashboard refresh interval")
 	rootCmd.Flags().StringVar(&claudeDir, "claude-dir", defaultClaudeDir(), "Path to Claude config directory")
 	rootCmd.Flags().BoolVar(&compact, "compact", false, "Compact mode for narrow terminals")
-	rootCmd.Flags().DurationVar(&maxAge, "max-age", 4*time.Hour, "Only show sessions modified within this duration (0 for all)")
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
 	}
 }
 
-func run(claudeDir string, refresh time.Duration, compact bool, _ time.Duration) error {
+func run(claudeDir string, refresh time.Duration, compact bool) error {
+	// Redirect log output away from stderr so watcher/event-loop warnings
+	// don't corrupt the Bubble Tea alt-screen. Failures fall back to discard.
+	if closer := redirectLog(); closer != nil {
+		defer closer()
+	}
+
 	scanner := session.NewScanner(claudeDir)
 
 	stopLoading := showLoading("Discovering sessions...")
@@ -82,11 +88,18 @@ func run(claudeDir string, refresh time.Duration, compact bool, _ time.Duration)
 
 	// Background process discovery — keeps session PIDs up to date
 	// without blocking the UI loop (PowerShell queries are slow on Windows).
+	procDone := make(chan struct{})
+	defer close(procDone)
 	go func() {
 		procTicker := time.NewTicker(2 * time.Second)
 		defer procTicker.Stop()
-		for range procTicker.C {
-			refreshProcesses(scanner)
+		for {
+			select {
+			case <-procDone:
+				return
+			case <-procTicker.C:
+				refreshProcesses(scanner)
+			}
 		}
 	}()
 
@@ -136,6 +149,31 @@ func showLoading(msg string) func() {
 }
 
 var output = termenv.NewOutput(os.Stdout)
+
+// redirectLog points the standard logger at a file under the user's cache
+// directory so internal warnings don't bleed into the Bubble Tea alt-screen.
+// Returns a close func, or nil if everything routed to io.Discard.
+func redirectLog() func() {
+	cacheDir, err := os.UserCacheDir()
+	if err != nil {
+		log.SetOutput(io.Discard)
+		return nil
+	}
+	dir := filepath.Join(cacheDir, "claude-watch")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		log.SetOutput(io.Discard)
+		return nil
+	}
+	f, err := os.OpenFile(
+		filepath.Join(dir, "claude-watch.log"),
+		os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		log.SetOutput(io.Discard)
+		return nil
+	}
+	log.SetOutput(f)
+	return func() { f.Close() }
+}
 
 func defaultClaudeDir() string {
 	home, err := os.UserHomeDir()

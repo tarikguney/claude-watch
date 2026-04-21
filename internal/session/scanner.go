@@ -79,6 +79,7 @@ func (s *Scanner) LoadSession(path string) error {
 		state = &State{FilePath: path}
 		s.sessions[path] = state
 	}
+	processRunning := state.PID > 0
 	s.mu.Unlock()
 
 	// Read head for original task
@@ -122,7 +123,7 @@ func (s *Scanner) LoadSession(path string) error {
 	lastIsInterrupt := lastRec.IsInterruptRecord()
 	status := StatusIdle
 	if len(tailRecords) > 0 {
-		status = DeriveStatus(lastRec, isError, now, state.PID > 0)
+		status = DeriveStatus(lastRec, isError, now, processRunning)
 	}
 
 	var startTime time.Time
@@ -179,6 +180,8 @@ func (s *Scanner) UpdateSession(path string) error {
 		return s.LoadSession(path)
 	}
 	offset := state.FileOffset
+	processRunning := state.PID > 0
+	prevStatus := state.Status
 	s.mu.RUnlock()
 
 	newRecords, newOffset, err := parser.ReadNewBytes(path, offset)
@@ -216,9 +219,9 @@ func (s *Scanner) UpdateSession(path string) error {
 
 	var status Status
 	if hasRelevant {
-		status = DeriveStatus(lastRec, isError, now, state.PID > 0)
+		status = DeriveStatus(lastRec, isError, now, processRunning)
 	} else {
-		status = state.Status // preserve previous status
+		status = prevStatus // preserve previous status
 	}
 
 	newCwd := ""
@@ -297,51 +300,6 @@ func (s *Scanner) LoadAll() {
 	for _, path := range paths {
 		s.LoadSession(path)
 	}
-}
-
-// FilteredSessions returns sessions whose cwd matches the given directory.
-// Comparison is done on cleaned/normalized paths.
-func (s *Scanner) FilteredSessions(dir string, maxAge time.Duration) []State {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	cleanDir := filepath.Clean(dir)
-	var cutoff time.Time
-	if maxAge > 0 {
-		cutoff = time.Now().Add(-maxAge)
-	}
-
-	result := make([]State, 0)
-	for _, state := range s.sessions {
-		if maxAge > 0 && !state.FileModTime.After(cutoff) {
-			continue
-		}
-		if state.Cwd != "" && filepath.Clean(state.Cwd) == cleanDir {
-			result = append(result, *state)
-		}
-	}
-	return deduplicateByCwd(result)
-}
-
-// RecentSessions returns sessions whose file was modified within maxAge.
-// If maxAge is 0, all sessions are returned.
-// Only the most recent session per cwd is kept.
-func (s *Scanner) RecentSessions(maxAge time.Duration) []State {
-	if maxAge == 0 {
-		return deduplicateByCwd(s.Sessions())
-	}
-
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	cutoff := time.Now().Add(-maxAge)
-	result := make([]State, 0)
-	for _, state := range s.sessions {
-		if state.FileModTime.After(cutoff) {
-			result = append(result, *state)
-		}
-	}
-	return deduplicateByCwd(result)
 }
 
 // deduplicateByCwd keeps only the most recently modified session per cwd.

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/fsnotify/fsnotify"
 )
@@ -18,6 +19,7 @@ type Watcher struct {
 	scanner  *Scanner
 	watcher  *fsnotify.Watcher
 	done     chan struct{}
+	stopOnce sync.Once
 }
 
 // NewWatcher creates a new file watcher attached to the given scanner.
@@ -50,10 +52,12 @@ func (w *Watcher) Start() error {
 	return nil
 }
 
-// Stop shuts down the watcher.
+// Stop shuts down the watcher. Safe to call multiple times.
 func (w *Watcher) Stop() {
-	close(w.done)
-	w.watcher.Close()
+	w.stopOnce.Do(func() {
+		close(w.done)
+		w.watcher.Close()
+	})
 }
 
 func (w *Watcher) eventLoop() {

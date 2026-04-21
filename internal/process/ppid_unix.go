@@ -26,3 +26,8 @@ func getParentPID(pid int) int {
 	}
 	return 0
 }
+
+// buildParentPIDMap is a no-op on Unix; /proc reads are O(1) per lookup so
+// callers fall through to getParentPID. Returning nil signals that behavior
+// to walkParentPIDs.
+func buildParentPIDMap() map[int]int { return nil }

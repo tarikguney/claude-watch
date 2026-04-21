@@ -27,10 +27,21 @@ type processEntry32 struct {
 }
 
 // getParentPID returns the parent process ID for a given PID on Windows.
+// Prefer buildParentPIDMap() when resolving multiple PIDs — this function
+// takes a full process-table snapshot per call.
 func getParentPID(pid int) int {
+	m := buildParentPIDMap()
+	return m[pid]
+}
+
+// buildParentPIDMap returns a pid->ppid map using a single system-wide
+// snapshot. Callers that look up multiple ancestors should build this once
+// and reuse it instead of calling getParentPID repeatedly.
+func buildParentPIDMap() map[int]int {
+	result := make(map[int]int)
 	handle, _, _ := procCreateToolhelp32Snapshot.Call(th32csSnapProcess, 0)
 	if handle == ^uintptr(0) {
-		return 0
+		return result
 	}
 	defer syscall.CloseHandle(syscall.Handle(handle))
 
@@ -38,17 +49,15 @@ func getParentPID(pid int) int {
 	entry.Size = uint32(unsafe.Sizeof(entry))
 	r, _, _ := procProcess32First.Call(handle, uintptr(unsafe.Pointer(&entry)))
 	if r == 0 {
-		return 0
+		return result
 	}
 	for {
-		if int(entry.ProcessID) == pid {
-			return int(entry.ParentProcessID)
-		}
+		result[int(entry.ProcessID)] = int(entry.ParentProcessID)
 		entry.Size = uint32(unsafe.Sizeof(entry))
 		r, _, _ = procProcess32Next.Call(handle, uintptr(unsafe.Pointer(&entry)))
 		if r == 0 {
 			break
 		}
 	}
-	return 0
+	return result
 }
