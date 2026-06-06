@@ -1,9 +1,7 @@
 # claude-watch
 
 > [!TIP]
-> Try [agent-watch](https://github.com/tarikguney/agent-watch) instead.
->
-> TRY `agent-watch` - an improved, newer version of `claude-watch`.
+> TRY [AGENT-WATCH](https://github.com/tarikguney/agent-watch) - AN IMPROVED, NEWER VERSION OF CLAUDE-WATCH.
 >
 > `agent-watch` is the successor to `claude-watch` and supports both Copilot and Claude in one dashboard.
 >
