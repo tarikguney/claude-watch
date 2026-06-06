@@ -1,5 +1,18 @@
 # claude-watch
 
+> [!TIP]
+> Try [agent-watch](https://github.com/tarikguney/agent-watch) instead.
+>
+> `agent-watch` is the successor to `claude-watch` and supports both Copilot and Claude in one dashboard.
+>
+> What you get with `agent-watch`:
+> - New features and active development
+> - Better state tracking
+> - A much better UX
+> - Improved PS Max / psmux integration
+>
+> This repository is no longer under maintenance, and all new development is happening in `agent-watch`.
+
 A zero-setup CLI dashboard for monitoring Claude Code agents in real time.
 
 Run `claude-watch` and instantly see what all your running Claude Code sessions are doing -- which project, current action, status, and how long they've been running. Designed to live in a tmux/psmux pane as your agent task manager.
@@ -37,7 +50,7 @@ sudo dnf install golang
 ## Installation
 
 ```bash
-go install github.com/tarikguney/claude-watch@latest
+go install github.com/tarikguney/agent-watch@latest
 ```
 
 ## Usage
