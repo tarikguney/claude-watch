@@ -3,6 +3,8 @@
 > [!TIP]
 > Try [agent-watch](https://github.com/tarikguney/agent-watch) instead.
 >
+> TRY `agent-watch` - an improved, newer version of `claude-watch`.
+>
 > `agent-watch` is the successor to `claude-watch` and supports both Copilot and Claude in one dashboard.
 >
 > What you get with `agent-watch`:
